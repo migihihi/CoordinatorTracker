@@ -3,7 +3,7 @@
 // - App code (/_next/static): saved on first use; file names change on every
 //   deploy, so a saved copy is never stale.
 // - Supabase and other outside requests are never touched.
-const VERSION = "v1";
+const VERSION = "v2";
 const PAGES = `pages-${VERSION}`;
 const ASSETS = `assets-${VERSION}`;
 const APP_PAGES = ["/", "/checkin", "/login"];
@@ -16,6 +16,16 @@ self.addEventListener("install", (event) => {
       await Promise.all(APP_PAGES.map((u) => pages.add(new Request(u, { cache: "reload" })).catch(() => {})));
       const assets = await caches.open(ASSETS);
       await Promise.all(STATIC_FILES.map((u) => assets.add(u).catch(() => {})));
+      // Also save every app-code file those screens use, so each one opens offline
+      // even if the coordinator hasn't visited it since this version was installed.
+      const code = new Set();
+      for (const u of APP_PAGES) {
+        const res = await pages.match(u);
+        if (!res) continue;
+        const html = await res.clone().text();
+        for (const m of html.matchAll(/\/_next\/static\/[^"'\s)\\]+/g)) code.add(m[0]);
+      }
+      await Promise.all([...code].map((u) => assets.add(u).catch(() => {})));
       await self.skipWaiting();
     })()
   );
