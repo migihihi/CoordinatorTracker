@@ -23,7 +23,7 @@ export default function AnnouncementsPage() {
 
   const load = useCallback(async () => {
     const [{ data: ppl }, { data: ann, error: aErr }] = await Promise.all([
-      supabase.from("profiles").select("id, full_name, email, role, admin_id"),
+      supabase.from("profiles").select("id, full_name, email, role, admin_id, active"),
       supabase
         .from("announcements")
         .select("id, message, active, audience, created_at, ended_at, created_by, author:profiles!announcements_created_by_fkey(full_name), announcement_recipients(coordinator_id)")
@@ -53,12 +53,12 @@ export default function AnnouncementsPage() {
 
   const myCoordinators = useMemo(
     () => people
-      .filter((p) => p.role === "coordinator" && p.admin_id === me?.id)
+      .filter((p) => p.role === "coordinator" && p.active !== false && p.admin_id === me?.id)
       .sort((a, b) => (a.full_name || "").localeCompare(b.full_name || "")),
     [people, me]
   );
   const allCoordinators = useMemo(
-    () => people.filter((p) => p.role === "coordinator").sort((a, b) => (a.full_name || "").localeCompare(b.full_name || "")),
+    () => people.filter((p) => p.role === "coordinator" && p.active !== false).sort((a, b) => (a.full_name || "").localeCompare(b.full_name || "")),
     [people]
   );
   const pickable = me?.isSuper ? allCoordinators : myCoordinators;
