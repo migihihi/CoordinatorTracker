@@ -18,11 +18,12 @@ export default function TeamPage() {
   const [savingId, setSavingId] = useState(null);
   const [search, setSearch] = useState("");
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
 
   const load = useCallback(async () => {
     const { data, error: err } = await supabase
       .from("profiles")
-      .select("id, full_name, email, role, admin_id, created_at")
+      .select("id, full_name, email, role, admin_id, active, created_at")
       .order("full_name");
     if (err) setError(err.message);
     setPeople(data || []);
@@ -39,14 +40,47 @@ export default function TeamPage() {
   }, [router, load]);
 
   const admins = useMemo(() => people.filter((p) => p.role === "hr_admin"), [people]);
+  const activeAdmins = useMemo(() => admins.filter((a) => a.active !== false), [admins]);
   const coordinators = useMemo(() => {
     let list = people.filter((p) => p.role === "coordinator");
     if (onlyUnassigned) list = list.filter((p) => !p.admin_id);
+    if (!showInactive) list = list.filter((p) => p.active !== false);
     const q = search.trim().toLowerCase();
     if (q) list = list.filter((p) => `${p.full_name} ${p.email}`.toLowerCase().includes(q));
     return list;
-  }, [people, search, onlyUnassigned]);
-  const unassignedCount = people.filter((p) => p.role === "coordinator" && !p.admin_id).length;
+  }, [people, search, onlyUnassigned, showInactive]);
+  const unassignedCount = people.filter((p) => p.role === "coordinator" && !p.admin_id && p.active !== false).length;
+  const inactiveCoordCount = people.filter((p) => p.role === "coordinator" && p.active === false).length;
+
+  async function setActive(person, active) {
+    setError("");
+    const who = person.full_name || person.email;
+    if (!active && !window.confirm(`Deactivate ${who}? They won't be able to sign in. Their history is kept, and you can reactivate them later.`)) return;
+    setSavingId(person.id);
+    const { error: err } = await supabase.from("profiles").update({ active }).eq("id", person.id);
+    setSavingId(null);
+    if (err) { setError(err.message); return; }
+    setPeople((prev) => prev.map((p) => (p.id === person.id ? { ...p, active } : p)));
+    flash(active ? `${who} reactivated.` : `${who} deactivated.`);
+  }
+
+  async function removeAdminRights(admin) {
+    setError("");
+    const theirs = people.filter((p) => p.role === "coordinator" && p.admin_id === admin.id);
+    const who = admin.full_name || admin.email;
+    const extra = theirs.length ? ` Their ${theirs.length} coordinator${theirs.length === 1 ? "" : "s"} will become unassigned.` : "";
+    if (!window.confirm(`Remove admin rights from ${who}? They'll become a regular coordinator account.${extra}`)) return;
+    setSavingId(admin.id);
+    if (theirs.length) {
+      const { error: uErr } = await supabase.from("profiles").update({ admin_id: null }).eq("admin_id", admin.id);
+      if (uErr) { setSavingId(null); setError(uErr.message); return; }
+    }
+    const { error: err } = await supabase.from("profiles").update({ role: "coordinator" }).eq("id", admin.id);
+    setSavingId(null);
+    if (err) { setError(err.message); return; }
+    flash(`${who} is no longer an admin.${extra}`);
+    load();
+  }
 
   function flash(msg) {
     setNotice(msg);
@@ -122,14 +156,23 @@ export default function TeamPage() {
         ) : (
           <table>
             <thead>
-              <tr><th>Name</th><th>Email</th><th>Coordinators</th></tr>
+              <tr><th>Name</th><th>Email</th><th>Coordinators</th><th>Status</th><th></th></tr>
             </thead>
             <tbody>
               {admins.map((a) => (
-                <tr key={a.id}>
+                <tr key={a.id} style={a.active === false ? { opacity: 0.6 } : undefined}>
                   <td>{a.full_name}</td>
                   <td>{a.email}</td>
                   <td>{people.filter((p) => p.role === "coordinator" && p.admin_id === a.id).length}</td>
+                  <td>{a.active === false ? <span className="badge flagged">Deactivated</span> : <span className="badge ok">Active</span>}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button className="link" disabled={savingId === a.id} onClick={() => setActive(a, a.active === false)}>
+                      {a.active === false ? "Reactivate" : "Deactivate"}
+                    </button>
+                    <button className="link" style={{ color: "var(--danger)" }} disabled={savingId === a.id} onClick={() => removeAdminRights(a)}>
+                      Remove admin rights
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -153,14 +196,21 @@ export default function TeamPage() {
               onChange={(e) => setOnlyUnassigned(e.target.checked)} />
             Unassigned only
           </label>
+          {inactiveCoordCount > 0 && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.9rem", paddingBottom: 10 }}>
+              <input type="checkbox" style={{ width: "auto", margin: 0 }} checked={showInactive}
+                onChange={(e) => setShowInactive(e.target.checked)} />
+              Show deactivated ({inactiveCoordCount})
+            </label>
+          )}
         </div>
         <table>
           <thead>
-            <tr><th>Coordinator</th><th>Email</th><th>Admin</th></tr>
+            <tr><th>Coordinator</th><th>Email</th><th>Admin</th><th></th></tr>
           </thead>
           <tbody>
             {coordinators.map((c) => (
-              <tr key={c.id} className={!c.admin_id ? "flagged-row" : ""}>
+              <tr key={c.id} className={!c.admin_id && c.active !== false ? "flagged-row" : ""} style={c.active === false ? { opacity: 0.6 } : undefined}>
                 <td>{c.full_name}</td>
                 <td>{c.email}</td>
                 <td>
@@ -171,8 +221,14 @@ export default function TeamPage() {
                     onChange={(e) => setAdminFor(c.id, e.target.value)}
                   >
                     <option value="">Unassigned</option>
-                    {admins.map((a) => <option key={a.id} value={a.id}>{a.full_name || a.email}</option>)}
+                    {activeAdmins.map((a) => <option key={a.id} value={a.id}>{a.full_name || a.email}</option>)}
                   </select>
+                </td>
+                <td>
+                  <button className="link" style={{ color: c.active === false ? "var(--primary)" : "var(--danger)" }}
+                    disabled={savingId === c.id} onClick={() => setActive(c, c.active === false)}>
+                    {c.active === false ? "Reactivate" : "Deactivate"}
+                  </button>
                 </td>
               </tr>
             ))}

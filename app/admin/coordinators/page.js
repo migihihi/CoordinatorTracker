@@ -19,12 +19,14 @@ export default function CoordinatorsPage() {
   const [search, setSearch] = useState("");
   const [adminFilter, setAdminFilter] = useState("all");
   const [addForm, setAddForm] = useState({}); // { [coordId]: { location_id, expected_time } }
+  const [showInactive, setShowInactive] = useState(false);
+  const [savingId, setSavingId] = useState(null);
 
   const load = useCallback(async (profile) => {
     const todayStart = startOfLocalDay(localDateKey());
     const [{ data: peopleData, error: pErr }, { data: siteData }, { data: assignData }, { data: logData }] = await Promise.all([
       supabase.from("profiles").select("id, full_name, email, role, admin_id, active").order("full_name"),
-      supabase.from("locations").select("id, name, address, created_by").order("name"),
+      supabase.from("locations").select("id, name, address, created_by, active").order("name"),
       supabase.from("location_assignments").select("id, coordinator_id, location_id, expected_time, active"),
       supabase
         .from("attendance_logs")
@@ -56,8 +58,8 @@ export default function CoordinatorsPage() {
     // Names for sites assigned to my coordinators that I didn't create (e.g. set up by the super admin).
     const missing = assignments.map((a) => a.location_id).filter((id) => !siteById[id]);
     if (missing.length === 0) return;
-    supabase.from("locations").select("id, name").in("id", [...new Set(missing)]).then(({ data }) => {
-      setAllSiteNames(Object.fromEntries((data || []).map((s) => [s.id, s.name])));
+    supabase.from("locations").select("id, name, active").in("id", [...new Set(missing)]).then(({ data }) => {
+      setAllSiteNames(Object.fromEntries((data || []).map((s) => [s.id, s.active === false ? `${s.name} (archived)` : s.name])));
     });
   }, [assignments, siteById]);
 
@@ -70,16 +72,33 @@ export default function CoordinatorsPage() {
   const coordinators = useMemo(() => {
     let list = people.filter((p) => p.role === "coordinator");
     if (!me?.isSuper) list = list.filter((p) => p.admin_id === me?.id);
+    if (!showInactive) list = list.filter((p) => p.active !== false);
     if (me?.isSuper && adminFilter !== "all") {
       list = list.filter((p) => (adminFilter === "unassigned" ? !p.admin_id : p.admin_id === adminFilter));
     }
     const q = search.trim().toLowerCase();
     if (q) list = list.filter((p) => `${p.full_name} ${p.email}`.toLowerCase().includes(q));
     return list;
-  }, [people, me, adminFilter, search]);
+  }, [people, me, adminFilter, search, showInactive]);
+  const inactiveCount = people.filter(
+    (p) => p.role === "coordinator" && p.active === false && (me?.isSuper || p.admin_id === me?.id)
+  ).length;
+
+  async function setActive(c, active) {
+    setError("");
+    if (!active && !window.confirm(`Deactivate ${c.full_name || c.email}? They won't be able to sign in or check in. Their history is kept, and you can reactivate them later.`)) return;
+    setSavingId(c.id);
+    const { error: err } = await supabase.from("profiles").update({ active }).eq("id", c.id);
+    setSavingId(null);
+    if (err) { setError(err.message); return; }
+    setPeople((prev) => prev.map((p) => (p.id === c.id ? { ...p, active } : p)));
+    setNotice(active ? "Coordinator reactivated." : "Coordinator deactivated.");
+    setTimeout(() => setNotice(""), 2500);
+  }
 
   function statusFor(coordId) {
     const mine = todayLogs.filter((l) => l.coordinator_id === coordId);
+    if (people.find((p) => p.id === coordId)?.active === false) return { label: "Deactivated", cls: "flagged" };
     if (mine.length === 0) return { label: "No check-in yet today", cls: "done" };
     const last = mine[mine.length - 1];
     const time = new Date(last.captured_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -141,6 +160,12 @@ export default function CoordinatorsPage() {
             </div>
           )}
         </div>
+        {inactiveCount > 0 && (
+          <label className="toggle-row" style={{ marginTop: 10 }}>
+            <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
+            Show deactivated ({inactiveCount})
+          </label>
+        )}
         <p className="muted" style={{ marginBottom: 0 }}>
           {coordinators.length} coordinator{coordinators.length === 1 ? "" : "s"}
           {!me.isSuper && " assigned to you"}.
@@ -164,9 +189,10 @@ export default function CoordinatorsPage() {
         const st = statusFor(c.id);
         const mine = assignments.filter((a) => a.coordinator_id === c.id);
         const f = addForm[c.id] || { location_id: "", expected_time: "" };
-        const available = sites.filter((s) => !mine.some((a) => a.location_id === s.id));
+        const available = sites.filter((s) => s.active !== false && !mine.some((a) => a.location_id === s.id));
+        const inactive = c.active === false;
         return (
-          <div className="card coord-card" key={c.id}>
+          <div className={`card coord-card ${inactive ? "archived" : ""}`} key={c.id}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
               <div>
                 <h2>{c.full_name || c.email}</h2>
@@ -175,7 +201,13 @@ export default function CoordinatorsPage() {
                   <span className="muted"> · Admin: {c.admin_id ? adminName(c.admin_id) : <em>unassigned</em>}</span>
                 )}
               </div>
-              <span className={`badge ${st.cls}`} style={{ alignSelf: "flex-start" }}>{st.label}</span>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                <span className={`badge ${st.cls}`}>{st.label}</span>
+                <button className="link" style={{ fontSize: "0.85rem", color: inactive ? "var(--primary)" : "var(--danger)" }}
+                  disabled={savingId === c.id} onClick={() => setActive(c, inactive)}>
+                  {inactive ? "Reactivate" : "Deactivate"}
+                </button>
+              </div>
             </div>
 
             <div style={{ margin: "12px 0" }}>
@@ -194,7 +226,7 @@ export default function CoordinatorsPage() {
               ))}
             </div>
 
-            {sites.length > 0 && (
+            {sites.length > 0 && !inactive && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <select
                   style={{ flex: 1, minWidth: 180, marginBottom: 0 }}

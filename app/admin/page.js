@@ -143,7 +143,7 @@ export default function AdminPage() {
           .limit(200),
         supabase
           .from("location_assignments")
-          .select("coordinator_id, location_id, expected_time, profiles(full_name), locations(name)")
+          .select("coordinator_id, location_id, expected_time, profiles(full_name, active), locations(name, active)")
           .eq("active", true),
         supabase
           .from("attendance_logs")
@@ -159,6 +159,7 @@ export default function AdminPage() {
       const checkedInToday = new Set((todayIns || []).map((l) => `${l.coordinator_id}_${l.location_id}`));
       setMissed((assignData || []).filter((a) => {
         if (!a.expected_time) return false;
+        if (a.profiles?.active === false || a.locations?.active === false) return false;
         const [h, m] = a.expected_time.split(":").map(Number);
         const expected = new Date();
         expected.setHours(h, m, 0, 0);

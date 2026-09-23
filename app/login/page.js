@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 import { APP_VERSION } from "../../lib/version";
@@ -13,6 +13,12 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [confirmMsg, setConfirmMsg] = useState("");
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("deactivated")) {
+      setError("This account has been deactivated. Contact your admin if you think this is a mistake.");
+    }
+  }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();
