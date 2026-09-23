@@ -309,7 +309,8 @@ tr.flagged-row { background: #fef2f2; }
 
 /* ---- Auth pages (login / reset-password) ---- */
 .auth-wrap {
-  min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+  /* divide by the desktop-mode zoom (if any) so the page is exactly one screen tall */
+  min-height: calc(100vh / var(--app-zoom, 1)); display: flex; flex-direction: column; align-items: center;
   justify-content: center; padding: 32px 16px;
 }
 .auth-logo { height: 64px; width: auto; margin-bottom: 22px; }
@@ -361,7 +362,6 @@ tr.flagged-row { background: #fef2f2; }
 
 /* ---- Phone sizing (v1.1.1) ---- */
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-body { min-height: 100vh; min-height: 100dvh; }
 
 @media (max-width: 600px) {
   html { font-size: 17px; }

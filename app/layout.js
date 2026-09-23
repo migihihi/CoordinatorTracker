@@ -30,7 +30,7 @@ export const viewport = {
 const desktopModeFix = `(function(){try{
   var sw=Math.min(screen.width||0,screen.height||0), iw=window.innerWidth;
   var touch=window.matchMedia&&window.matchMedia('(pointer:coarse)').matches;
-  if(touch&&sw>0&&sw<700&&iw>sw*1.3){document.documentElement.style.zoom=(iw/sw).toFixed(3);}
+  if(touch&&sw>0&&sw<700&&iw>sw*1.3){var z=(iw/sw).toFixed(3),d=document.documentElement;d.style.zoom=z;d.style.setProperty('--app-zoom',z);}
 }catch(e){}})();`;
 
 export default function RootLayout({ children }) {
