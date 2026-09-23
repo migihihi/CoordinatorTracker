@@ -3,20 +3,42 @@ import "./globals.css";
 export const metadata = {
   title: "Coordinator Attendance",
   description: "Field attendance tracking for Coordinators",
+  manifest: "/manifest.json",
+  icons: {
+    icon: "/icon-192.png",
+    apple: "/apple-touch-icon.png",
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Attendance",
+    statusBarStyle: "default",
+  },
 };
+
+// One viewport tag (Next.js renders it). Fits the page to the phone's width.
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: "cover",
+  themeColor: "#1A6BA3",
+};
+
+// Safety net: if a phone is in "desktop site" mode the browser ignores the
+// viewport tag and lays the page out ~980px wide, making everything tiny.
+// Detect that and zoom the page back to the phone's real width.
+const desktopModeFix = `(function(){try{
+  var sw=Math.min(screen.width||0,screen.height||0), iw=window.innerWidth;
+  var touch=window.matchMedia&&window.matchMedia('(pointer:coarse)').matches;
+  if(touch&&sw>0&&sw<700&&iw>sw*1.3){document.documentElement.style.zoom=(iw/sw).toFixed(3);}
+}catch(e){}})();`;
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-        <meta name="theme-color" content="#1A6BA3" />
-        <link rel="manifest" href="/manifest.json" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-        <link rel="icon" href="/icon-192.png" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-        <meta name="apple-mobile-web-app-title" content="Attendance" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <script dangerouslySetInnerHTML={{ __html: desktopModeFix }} />
       </head>
       <body>{children}</body>
     </html>
