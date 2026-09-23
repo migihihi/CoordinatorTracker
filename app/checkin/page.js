@@ -79,7 +79,8 @@ export default function CheckinPage() {
   const [leaveReason, setLeaveReason] = useState("day_off");
   const [leaveNote, setLeaveNote] = useState("");
   const [historyRows, setHistoryRows] = useState(null);
-  const [announcement, setAnnouncement] = useState(null); // { id, message, dismissed }
+  const [announcements, setAnnouncements] = useState([]); // active announcements addressed to me
+  const [dismissedIds, setDismissedIds] = useState(() => new Set());
 
   const showToast = (msg) => {
     setToast(msg);
@@ -155,18 +156,15 @@ export default function CheckinPage() {
       .maybeSingle();
     setLeaveToday(leave || null);
 
+    // Only announcements addressed to this user.
     const { data: announce } = await supabase
       .from("announcements")
-      .select("id, message")
+      .select("id, message, created_at, announcement_recipients!inner(coordinator_id)")
+      .eq("announcement_recipients.coordinator_id", uid)
       .eq("active", true)
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    setAnnouncement((prev) => {
-      // keep it dismissed across reloads if it's the same message the user already closed
-      if (announce && prev && prev.id === announce.id) return { ...announce, dismissed: prev.dismissed };
-      return announce ? { ...announce, dismissed: false } : null;
-    });
+      .limit(5);
+    setAnnouncements(announce || []);
 
     setPendingCount(readQueue().filter((r) => r.coordinator_id === uid).length);
   }, []);
@@ -240,7 +238,7 @@ export default function CheckinPage() {
         .eq("id", uid)
         .single();
       setFullName(profile?.full_name || session.user.email);
-      setIsHrAdmin(profile?.role === "hr_admin");
+      setIsHrAdmin(profile?.role === "hr_admin" || profile?.role === "super_admin");
 
       await loadData(uid);
       setLoading(false);
@@ -272,8 +270,8 @@ export default function CheckinPage() {
     };
   }, [userId, loadData]);
 
-  function dismissAnnouncement() {
-    setAnnouncement((prev) => (prev ? { ...prev, dismissed: true } : prev));
+  function dismissAnnouncement(id) {
+    setDismissedIds((prev) => new Set(prev).add(id));
   }
 
   function onNotesChange(text) {
@@ -464,16 +462,16 @@ export default function CheckinPage() {
           </div>
         </div>
         {isHrAdmin && (
-          <button className="link" onClick={() => router.push("/admin")}>HR Dashboard</button>
+          <button className="link" onClick={() => router.push("/admin")}>Admin Dashboard</button>
         )}
       </div>
 
-      {announcement && !announcement.dismissed && (
-        <div className="announce-banner">
-          <span>📣 {announcement.message}</span>
-          <button className="link" onClick={dismissAnnouncement}>✕</button>
+      {announcements.filter((a) => !dismissedIds.has(a.id)).map((a) => (
+        <div className="announce-banner" key={a.id}>
+          <span>📣 {a.message}</span>
+          <button className="link" onClick={() => dismissAnnouncement(a.id)}>✕</button>
         </div>
-      )}
+      ))}
 
       {tab === "home" && (
         <>
@@ -633,11 +631,11 @@ export default function CheckinPage() {
           <div className="card">
             <p style={{ fontWeight: 700, marginBottom: 2 }}>{fullName}</p>
             <p className="muted" style={{ marginTop: 0 }}>{email}</p>
-            <span className="badge done">{isHrAdmin ? "HR Admin" : "Coordinator"}</span>
+            <span className="badge done">{isHrAdmin ? "Admin" : "Coordinator"}</span>
           </div>
           {isHrAdmin && (
             <button className="secondary" style={{ marginBottom: 10 }} onClick={() => router.push("/admin")}>
-              HR Dashboard
+              Admin Dashboard
             </button>
           )}
           <button className="secondary" onClick={handleLogout}>Log out</button>
