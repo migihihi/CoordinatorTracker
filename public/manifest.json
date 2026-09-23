@@ -1,0 +1,13 @@
+{
+  "name": "Coordinator Attendance",
+  "short_name": "Attendance",
+  "description": "Field attendance check-in for Coordinators",
+  "start_url": "/checkin",
+  "display": "standalone",
+  "background_color": "#F6F8EF",
+  "theme_color": "#1A6BA3",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
