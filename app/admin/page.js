@@ -10,7 +10,7 @@ const GRACE_MS = 30 * 60 * 1000; // 30 min grace past expected_time before flagg
 const TABLE_LIMIT = 300; // rows shown on screen; CSV always has everything in range
 
 const LOG_COLUMNS =
-  "id, type, captured_at, lat, lng, distance_from_site_m, is_flagged, photo_url, synced_at, notes, coordinator_id, location_id, profiles(full_name), locations(name, address)";
+  "id, type, captured_at, lat, lng, distance_from_site_m, is_flagged, photo_url, site_photo_url, photos_deleted_at, synced_at, notes, coordinator_id, location_id, profiles(full_name), locations(name, address)";
 
 function csvCell(v) {
   const s = v == null ? "" : String(v);
@@ -341,7 +341,7 @@ export default function AdminPage() {
                   <th>Captured</th>
                   <th>Distance</th>
                   <th>Notes</th>
-                  <th>Photo</th>
+                  <th>Photos</th>
                 </tr>
               </thead>
               <tbody>
@@ -363,7 +363,14 @@ export default function AdminPage() {
                       </td>
                       <td style={{ whiteSpace: "normal", maxWidth: 220 }}>{log.notes || "—"}</td>
                       <td>
-                        {log.photo_url ? <button className="link" onClick={() => viewPhoto(log.photo_url)}>View</button> : "—"}
+                        {log.photos_deleted_at ? (
+                          <span className="muted" title="Photos are kept for 90 days">Deleted (90 days)</span>
+                        ) : log.photo_url || log.site_photo_url ? (
+                          <span className="photo-links">
+                            {log.photo_url && <button className="link" onClick={() => viewPhoto(log.photo_url)}>Selfie</button>}
+                            {log.site_photo_url && <button className="link" onClick={() => viewPhoto(log.site_photo_url)}>Site</button>}
+                          </span>
+                        ) : "—"}
                       </td>
                     </tr>
                   );
