@@ -1,4 +1,5 @@
 import "./globals.css";
+import ServiceWorker from "./ServiceWorker";
 
 export const metadata = {
   title: "Coordinator Attendance",
@@ -40,7 +41,10 @@ export default function RootLayout({ children }) {
         <meta name="mobile-web-app-capable" content="yes" />
         <script dangerouslySetInnerHTML={{ __html: desktopModeFix }} />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <ServiceWorker />
+      </body>
     </html>
   );
 }

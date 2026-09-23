@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../lib/supabaseClient";
+import { getCurrentUser, signOutDeactivated } from "../lib/session";
 
 export default function Home() {
   const router = useRouter();
@@ -9,18 +10,24 @@ export default function Home() {
 
   useEffect(() => {
     (async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      const user = await getCurrentUser();
+      if (!user) {
         router.replace("/login");
+        return;
+      }
+      if (user.offline) {
+        router.replace("/checkin"); // offline: go straight to check-in
         return;
       }
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role")
-        .eq("id", session.user.id)
+        .select("role, active")
+        .eq("id", user.id)
         .single();
 
-      if (profile?.role === "hr_admin" || profile?.role === "super_admin") {
+      if (profile?.active === false) {
+        await signOutDeactivated(router);
+      } else if (profile?.role === "hr_admin" || profile?.role === "super_admin") {
         router.replace("/admin");
       } else {
         router.replace("/checkin");
