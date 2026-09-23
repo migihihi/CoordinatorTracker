@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
-import { distanceMeters, compressImageToDataUrl } from "../../lib/geo";
+import { distanceMeters } from "../../lib/geo";
+import CameraCapture from "./CameraCapture";
 import { getCurrentUser, localDateKey, signOutDeactivated } from "../../lib/session";
 import {
   readQueue,
@@ -45,6 +46,24 @@ function fmtTime(iso) {
 function fmtHrs(inIso, outIso) {
   return ((new Date(outIso) - new Date(inIso)) / 3600000).toFixed(1);
 }
+// Check-in: selfie + photo of the site (back camera). Check-out: selfie only.
+const CHECKIN_SHOTS = [
+  { facing: "user", title: "Selfie", hint: "Center your face in the frame.", maxDim: 720, quality: 0.65 },
+  { facing: "environment", title: "Photo of the site", hint: "Show the store front, signage or display area.", maxDim: 900, quality: 0.6 },
+];
+const CHECKOUT_SHOTS = [CHECKIN_SHOTS[0]];
+
+function getPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error("Geolocation not supported"));
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 20000,
+      maximumAge: 0,
+    });
+  });
+}
+
 function draftKey(uid, locationId) {
   return `visit_notes_draft_v1_${uid}_${locationId}_${todayKey()}`;
 }
@@ -73,8 +92,8 @@ const IconProfile = () => (
 
 export default function CheckinPage() {
   const router = useRouter();
-  const fileInputRef = useRef(null);
   const pendingActionRef = useRef(null); // { locationId, type, notes }
+  const gpsRef = useRef(null); // location lookup started while the photos are being taken
 
   const [userId, setUserId] = useState(null);
   const [fullName, setFullName] = useState("");
@@ -99,6 +118,7 @@ export default function CheckinPage() {
   const [announcements, setAnnouncements] = useState([]); // active announcements addressed to me
   const [dismissedIds, setDismissedIds] = useState(() => new Set());
   const [usingSaved, setUsingSaved] = useState(false); // showing data saved on the phone (offline)
+  const [cameraSteps, setCameraSteps] = useState(null); // in-app camera open when set
 
   const showToast = (msg) => {
     setToast(msg);
@@ -369,31 +389,35 @@ export default function CheckinPage() {
       notes: type === "check_out" ? draftNote : null,
     };
     setSheet(null);
-    fileInputRef.current?.click();
+    // start finding the location now, while the photos are being taken
+    gpsRef.current = getPosition();
+    gpsRef.current.catch(() => {}); // handled when the photos are done
+    setCameraSteps(type === "check_in" ? CHECKIN_SHOTS : CHECKOUT_SHOTS);
   }
 
-  async function onPhotoSelected(e) {
-    const file = e.target.files?.[0];
+  function onCameraCancel() {
+    setCameraSteps(null);
+    pendingActionRef.current = null;
+    gpsRef.current = null;
+  }
+
+  async function onPhotosTaken(photos) {
+    setCameraSteps(null);
     const action = pendingActionRef.current;
-    e.target.value = "";
-    if (!file || !action) return;
+    if (!action || !photos?.length) return;
 
     const site = sites.find((s) => s.location.id === action.locationId)?.location;
     if (!site) return;
 
     setBusy(true);
     try {
-      const [photoDataUrl, position] = await Promise.all([
-        compressImageToDataUrl(file),
-        new Promise((resolve, reject) => {
-          if (!navigator.geolocation) return reject(new Error("Geolocation not supported"));
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: true,
-            timeout: 15000,
-            maximumAge: 0,
-          });
-        }),
-      ]);
+      const [photoDataUrl, sitePhotoDataUrl = null] = photos;
+      let position;
+      try {
+        position = await gpsRef.current;
+      } catch {
+        position = await getPosition(); // first attempt timed out while taking photos: try once more
+      }
 
       const lat = position.coords.latitude;
       const lng = position.coords.longitude;
@@ -413,6 +437,7 @@ export default function CheckinPage() {
         distance_from_site_m: Math.round(dist),
         is_flagged,
         photoDataUrl,
+        sitePhotoDataUrl,
         notes: action.notes,
       };
 
@@ -428,7 +453,11 @@ export default function CheckinPage() {
           setDraftNote("");
         }
       } else {
-        enqueue(record);
+        try {
+          enqueue(record);
+        } catch {
+          throw new Error("Your phone has no room left for offline check-ins. Connect to the internet so they can sync, then try again.");
+        }
         showToast("No connection — saved, will sync automatically");
       }
       await loadData(userId);
@@ -710,15 +739,9 @@ export default function CheckinPage() {
         </div>
       )}
 
-      {/* Hidden input triggers the device camera when clicked programmatically */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        capture="user"
-        style={{ display: "none" }}
-        onChange={onPhotoSelected}
-      />
+      {cameraSteps && (
+        <CameraCapture steps={cameraSteps} onDone={onPhotosTaken} onCancel={onCameraCancel} />
+      )}
 
       {toast && <div className="toast">{toast}</div>}
 
@@ -748,7 +771,9 @@ export default function CheckinPage() {
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
             <h3>{nextAction === "check_out" ? "Confirm check-out" : "Confirm check-in"}</h3>
             <p className="muted">
-              {selectedSite?.name} — we'll capture your GPS location and a quick photo next.
+              {selectedSite?.name} — {nextAction === "check_out"
+                ? "we'll capture your GPS location and a quick selfie next."
+                : "we'll capture your GPS location, a selfie, then a photo of the site."}
             </p>
             <div className="sheet-actions">
               <button className="primary" onClick={() => proceedToCapture(nextAction)}>Continue</button>

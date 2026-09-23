@@ -461,3 +461,22 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .toggle-row { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; }
 .toggle-row input { width: auto; margin: 0; min-height: 0; }
 @media (max-width: 600px) { .map-box { height: 260px; } }
+
+/* ---- v1.3: in-app camera ---- */
+.camera-overlay { position: fixed; inset: 0; z-index: 100; background: #000; color: #fff; display: flex; flex-direction: column; }
+.camera-top { display: flex; align-items: center; justify-content: space-between; padding: calc(10px + env(safe-area-inset-top)) 12px 10px; }
+.camera-cancel { color: #fff !important; width: 60px; text-align: left; }
+.camera-step { display: flex; flex-direction: column; align-items: center; text-align: center; font-size: 0.95rem; }
+.camera-step span { font-size: 0.75rem; opacity: 0.75; font-weight: 600; }
+.camera-stage { flex: 1; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.camera-view { width: 100%; height: 100%; object-fit: cover; background: #111; }
+.camera-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; background: rgba(0,0,0,0.6); }
+.camera-msg p { margin: 0 0 6px; }
+.camera-bottom { padding: 14px 20px calc(18px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.camera-hint { margin: 0; font-size: 0.9rem; opacity: 0.85; text-align: center; }
+.camera-actions { display: flex; gap: 10px; width: 100%; max-width: 420px; }
+.camera-actions button { flex: 1; }
+.shutter { width: 76px; height: 76px; border-radius: 50%; background: #fff; border: 5px solid rgba(255,255,255,0.4); background-clip: padding-box; padding: 0; min-height: 0; }
+.shutter:active { transform: scale(0.94); }
+.shutter:disabled { opacity: 0.4; }
+.photo-links { display: flex; gap: 6px; }
