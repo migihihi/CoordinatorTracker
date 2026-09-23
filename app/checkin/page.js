@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabaseClient";
 import { distanceMeters, compressImageToDataUrl } from "../../lib/geo";
+import { getCurrentUser, localDateKey, signOutDeactivated } from "../../lib/session";
 import {
   readQueue,
   enqueue,
@@ -20,7 +21,23 @@ function startOfToday() {
   return d.toISOString();
 }
 function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+  // local (Philippine) date, not UTC
+  return localDateKey();
+}
+function cacheKey(uid) {
+  return `att_cache_v1_${uid}`;
+}
+function readCache(uid) {
+  try {
+    return JSON.parse(localStorage.getItem(cacheKey(uid)) || "{}");
+  } catch {
+    return {};
+  }
+}
+function writeCache(uid, data) {
+  try {
+    localStorage.setItem(cacheKey(uid), JSON.stringify({ ...readCache(uid), ...data }));
+  } catch {}
 }
 function fmtTime(iso) {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -81,6 +98,7 @@ export default function CheckinPage() {
   const [historyRows, setHistoryRows] = useState(null);
   const [announcements, setAnnouncements] = useState([]); // active announcements addressed to me
   const [dismissedIds, setDismissedIds] = useState(() => new Set());
+  const [usingSaved, setUsingSaved] = useState(false); // showing data saved on the phone (offline)
 
   const showToast = (msg) => {
     setToast(msg);
@@ -126,45 +144,73 @@ export default function CheckinPage() {
   }, [userId, selectedLocationId]);
 
   const loadData = useCallback(async (uid) => {
-    const { data: assignments, error: aErr } = await supabase
-      .from("location_assignments")
-      .select("location_id, expected_time, locations(id, name, address, lat, lng, radius_meters)")
-      .eq("coordinator_id", uid)
-      .eq("active", true);
-    if (aErr) {
-      setError(aErr.message);
-      return;
+    const today = todayKey();
+    const cache = readCache(uid);
+
+    // check-ins saved on the phone but not yet synced still count for today's status
+    const queuedToday = readQueue()
+      .filter((r) => r.coordinator_id === uid && localDateKey(new Date(r.captured_at)) === today)
+      .map((r) => ({ id: r.id, location_id: r.location_id, type: r.type, captured_at: r.captured_at, notes: r.notes }));
+    const withQueued = (logs) => {
+      const seen = new Set(logs.map((l) => l.id));
+      return [...logs, ...queuedToday.filter((q) => !seen.has(q.id))].sort(
+        (a, b) => new Date(a.captured_at) - new Date(b.captured_at)
+      );
+    };
+
+    try {
+      if (typeof navigator !== "undefined" && !navigator.onLine) throw new Error("offline");
+
+      const { data: assignments, error: aErr } = await supabase
+        .from("location_assignments")
+        .select("location_id, expected_time, locations(id, name, address, lat, lng, radius_meters, active)")
+        .eq("coordinator_id", uid)
+        .eq("active", true);
+      if (aErr) throw aErr;
+      const list = (assignments || [])
+        .filter((a) => a.locations && a.locations.active !== false)
+        .map((a) => ({ location: a.locations, expected_time: a.expected_time }));
+
+      const { data: logs, error: lErr } = await supabase
+        .from("attendance_logs")
+        .select("id, location_id, type, captured_at, notes")
+        .eq("coordinator_id", uid)
+        .gte("captured_at", startOfToday())
+        .order("captured_at", { ascending: true });
+      if (lErr) throw lErr;
+
+      const { data: leave } = await supabase
+        .from("leave_records")
+        .select("id, reason, note")
+        .eq("coordinator_id", uid)
+        .eq("leave_date", today)
+        .maybeSingle();
+
+      // Only announcements addressed to this user.
+      const { data: announce } = await supabase
+        .from("announcements")
+        .select("id, message, created_at, announcement_recipients!inner(coordinator_id)")
+        .eq("announcement_recipients.coordinator_id", uid)
+        .eq("active", true)
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      setSites(list);
+      setTodaysLogs(withQueued(logs || []));
+      setLeaveToday(leave || null);
+      setAnnouncements(announce || []);
+      setUsingSaved(false);
+      writeCache(uid, { sites: list, day: today, logs: logs || [], leave: leave || null, announcements: announce || [] });
+    } catch (e) {
+      // Offline (or the server can't be reached): use what was saved on the phone last time.
+      setSites(cache.sites || []);
+      setTodaysLogs(withQueued(cache.day === today ? cache.logs || [] : []));
+      setLeaveToday(cache.day === today ? cache.leave || null : null);
+      setAnnouncements(cache.announcements || []);
+      setUsingSaved(true);
+      const online = typeof navigator === "undefined" || navigator.onLine;
+      if (online && !cache.sites) setError(e?.message || "Couldn't load your sites. Check your connection.");
     }
-    const list = (assignments || [])
-      .filter((a) => a.locations)
-      .map((a) => ({ location: a.locations, expected_time: a.expected_time }));
-    setSites(list);
-
-    const { data: logs } = await supabase
-      .from("attendance_logs")
-      .select("location_id, type, captured_at, notes")
-      .eq("coordinator_id", uid)
-      .gte("captured_at", startOfToday())
-      .order("captured_at", { ascending: true });
-    setTodaysLogs(logs || []);
-
-    const { data: leave } = await supabase
-      .from("leave_records")
-      .select("id, reason, note")
-      .eq("coordinator_id", uid)
-      .eq("leave_date", todayKey())
-      .maybeSingle();
-    setLeaveToday(leave || null);
-
-    // Only announcements addressed to this user.
-    const { data: announce } = await supabase
-      .from("announcements")
-      .select("id, message, created_at, announcement_recipients!inner(coordinator_id)")
-      .eq("announcement_recipients.coordinator_id", uid)
-      .eq("active", true)
-      .order("created_at", { ascending: false })
-      .limit(5);
-    setAnnouncements(announce || []);
 
     setPendingCount(readQueue().filter((r) => r.coordinator_id === uid).length);
   }, []);
@@ -183,7 +229,7 @@ export default function CheckinPage() {
         .from("leave_records")
         .select("leave_date, reason, note")
         .eq("coordinator_id", uid)
-        .gte("leave_date", since.toISOString().slice(0, 10))
+        .gte("leave_date", localDateKey(since))
         .order("leave_date", { ascending: false }),
     ]);
 
@@ -223,21 +269,34 @@ export default function CheckinPage() {
 
   useEffect(() => {
     (async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      const user = await getCurrentUser();
+      if (!user) {
         router.replace("/login");
         return;
       }
-      const uid = session.user.id;
+      const uid = user.id;
       setUserId(uid);
-      setEmail(session.user.email || "");
+      setEmail(user.email || "");
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("full_name, role")
-        .eq("id", uid)
-        .single();
-      setFullName(profile?.full_name || session.user.email);
+      let profile = null;
+      try {
+        const { data } = await supabase
+          .from("profiles")
+          .select("full_name, role, active")
+          .eq("id", uid)
+          .single();
+        profile = data;
+      } catch {}
+      if (profile) {
+        writeCache(uid, { profile });
+      } else {
+        profile = readCache(uid).profile || null; // offline: last known profile
+      }
+      if (profile && profile.active === false) {
+        await signOutDeactivated(router);
+        return;
+      }
+      setFullName(profile?.full_name || user.email);
       setIsHrAdmin(profile?.role === "hr_admin" || profile?.role === "super_admin");
 
       await loadData(uid);
@@ -247,10 +306,10 @@ export default function CheckinPage() {
   }, [loadData, router]);
 
   useEffect(() => {
-    if (tab === "history" && userId && historyRows === null) {
+    if (tab === "history" && userId && historyRows === null && !isOffline) {
       loadHistory(userId);
     }
-  }, [tab, userId, historyRows, loadHistory]);
+  }, [tab, userId, historyRows, loadHistory, isOffline]);
 
   useEffect(() => {
     setIsOffline(typeof navigator !== "undefined" && !navigator.onLine);
@@ -404,7 +463,7 @@ export default function CheckinPage() {
   async function handleSubmitLeave() {
     setBusy(true);
     setError("");
-    const result = await submitLeaveRecord({ coordinator_id: userId, reason: leaveReason, note: leaveNote });
+    const result = await submitLeaveRecord({ coordinator_id: userId, reason: leaveReason, note: leaveNote, leave_date: todayKey() });
     setBusy(false);
     if (result.ok) {
       setSheet(null);
@@ -479,6 +538,13 @@ export default function CheckinPage() {
             <div className="offline-banner">
               <span className="offline-dot" />
               You're offline — check-ins will be saved and synced automatically
+            </div>
+          )}
+
+          {usingSaved && !isOffline && (
+            <div className="offline-banner">
+              <span className="offline-dot" />
+              Can't reach the server — showing your saved sites
             </div>
           )}
 
@@ -600,7 +666,9 @@ export default function CheckinPage() {
         <div>
           <h2 style={{ marginTop: 4 }}>History</h2>
           <p className="muted" style={{ marginTop: -6 }}>Your attendance record</p>
-          {historyRows === null && <p className="muted">Loading...</p>}
+          {historyRows === null && (
+            <p className="muted">{isOffline ? "History needs a connection. It will load when you're back online." : "Loading..."}</p>
+          )}
           {historyRows && historyRows.length === 0 && <p className="muted">No activity in the last 30 days.</p>}
           {historyRows && historyRows.map((row) => (
             <div className="history-entry" key={row.dayStr}>
