@@ -20,7 +20,7 @@ export default function Home() {
         .eq("id", session.user.id)
         .single();
 
-      if (profile?.role === "hr_admin") {
+      if (profile?.role === "hr_admin" || profile?.role === "super_admin") {
         router.replace("/admin");
       } else {
         router.replace("/checkin");
