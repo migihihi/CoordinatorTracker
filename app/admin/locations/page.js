@@ -1,37 +1,52 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
+import { requireAdmin } from "../../../lib/adminAuth";
+import AdminNav from "../AdminNav";
 
 export default function LocationsAdminPage() {
   const router = useRouter();
+  const [me, setMe] = useState(null);
   const [loading, setLoading] = useState(true);
   const [locations, setLocations] = useState([]);
-  const [coordinators, setCoordinators] = useState([]);
+  const [people, setPeople] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [error, setError] = useState("");
 
   const [form, setForm] = useState({ name: "", address: "", lat: "", lng: "", radius_meters: 200 });
   const [assignForm, setAssignForm] = useState({}); // { [locationId]: { coordinator_id, expected_time } }
 
-  const load = useCallback(async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) { router.replace("/login"); return; }
-    const { data: profile } = await supabase.from("profiles").select("role").eq("id", session.user.id).single();
-    if (profile?.role !== "hr_admin") { router.replace("/checkin"); return; }
-
-    const [{ data: locs }, { data: coords }, { data: assigns }] = await Promise.all([
+  const load = useCallback(async (profile) => {
+    const [{ data: locs, error: lErr }, { data: ppl }, { data: assigns }] = await Promise.all([
       supabase.from("locations").select("*").order("created_at", { ascending: false }),
-      supabase.from("profiles").select("id, full_name, email, role"),
+      supabase.from("profiles").select("id, full_name, email, role, admin_id"),
       supabase.from("location_assignments").select("id, location_id, coordinator_id, expected_time, profiles(full_name)"),
     ]);
-    setLocations(locs || []);
-    setCoordinators(coords || []);
+    if (lErr) setError(lErr.message);
+    // RLS also returns sites merely assigned to my coordinators; this page lists the ones I own.
+    setLocations((locs || []).filter((l) => profile.isSuper || l.created_by === profile.id));
+    setPeople(ppl || []);
     setAssignments(assigns || []);
-    setLoading(false);
-  }, [router]);
+  }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    (async () => {
+      const profile = await requireAdmin(router);
+      if (!profile) return;
+      setMe(profile);
+      await load(profile);
+      setLoading(false);
+    })();
+  }, [router, load]);
+
+  const coordinators = useMemo(
+    () => people
+      .filter((p) => p.role === "coordinator" && (me?.isSuper || p.admin_id === me?.id))
+      .sort((a, b) => (a.full_name || "").localeCompare(b.full_name || "")),
+    [people, me]
+  );
+  const nameOf = (id) => people.find((p) => p.id === id)?.full_name || "";
 
   async function handleAddLocation(e) {
     e.preventDefault();
@@ -40,16 +55,17 @@ export default function LocationsAdminPage() {
       setError("Name, latitude and longitude are required.");
       return;
     }
-    const { error } = await supabase.from("locations").insert({
+    const { error: err } = await supabase.from("locations").insert({
       name: form.name,
       address: form.address,
       lat: parseFloat(form.lat),
       lng: parseFloat(form.lng),
       radius_meters: parseInt(form.radius_meters) || 200,
+      created_by: me.id,
     });
-    if (error) { setError(error.message); return; }
+    if (err) { setError(err.message); return; }
     setForm({ name: "", address: "", lat: "", lng: "", radius_meters: 200 });
-    load();
+    load(me);
   }
 
   function useMyLocation() {
@@ -65,35 +81,30 @@ export default function LocationsAdminPage() {
   async function handleAssign(locationId) {
     const f = assignForm[locationId];
     if (!f?.coordinator_id) return;
-    const { error } = await supabase.from("location_assignments").insert({
+    setError("");
+    const { error: err } = await supabase.from("location_assignments").insert({
       location_id: locationId,
       coordinator_id: f.coordinator_id,
       expected_time: f.expected_time || null,
     });
-    if (error) { setError(error.message); return; }
+    if (err) {
+      setError(err.message.includes("duplicate") ? "That coordinator is already assigned to this site." : err.message);
+      return;
+    }
     setAssignForm((prev) => ({ ...prev, [locationId]: { coordinator_id: "", expected_time: "" } }));
-    load();
+    load(me);
   }
 
   async function handleRemoveAssignment(id) {
     await supabase.from("location_assignments").delete().eq("id", id);
-    load();
+    load(me);
   }
 
   if (loading) return <div className="admin-container"><p className="muted">Loading...</p></div>;
 
   return (
     <div className="admin-container">
-      <div className="admin-header">
-        <div className="brand-row">
-          <img src="/rera-icon.png" className="brand-mark" alt="Rera" />
-          <div>
-            <h1>Manage Locations</h1>
-            <span className="muted">Sites and coordinator assignments</span>
-          </div>
-        </div>
-        <button className="link" onClick={() => router.push("/admin")}>← Back to log</button>
-      </div>
+      <AdminNav me={me} title={me.isSuper ? "All Sites" : "My Sites"} />
 
       {error && <div className="error-box">{error}</div>}
 
@@ -125,45 +136,50 @@ export default function LocationsAdminPage() {
         return (
           <div className="card" key={loc.id}>
             <h2>{loc.name}</h2>
-            <p className="muted" style={{ marginTop: -6 }}>{loc.address} · radius {loc.radius_meters}m</p>
+            <p className="muted" style={{ marginTop: -6 }}>
+              {loc.address} · radius {loc.radius_meters}m
+              {me.isSuper && <> · created by {loc.created_by ? nameOf(loc.created_by) || "an admin" : "—"}</>}
+            </p>
 
             {locAssignments.length > 0 && (
               <div style={{ marginBottom: 10 }}>
                 {locAssignments.map((a) => (
-                  <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0" }}>
-                    <span>{a.profiles?.full_name} {a.expected_time ? `· expected ${a.expected_time}` : ""}</span>
+                  <div key={a.id} className="site-line">
+                    <span>{a.profiles?.full_name} {a.expected_time ? `· expected ${a.expected_time.slice(0, 5)}` : ""}</span>
                     <button className="link" onClick={() => handleRemoveAssignment(a.id)}>Remove</button>
                   </div>
                 ))}
               </div>
             )}
 
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <select
-                style={{ flex: 1, minWidth: 160 }}
-                value={f.coordinator_id}
-                onChange={(e) => setAssignForm((prev) => ({ ...prev, [loc.id]: { ...f, coordinator_id: e.target.value } }))}
-              >
-                <option value="">Assign coordinator...</option>
-                {coordinators.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.full_name || c.email}{c.role === "hr_admin" ? " (HR)" : ""}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="time"
-                style={{ width: 120 }}
-                value={f.expected_time}
-                onChange={(e) => setAssignForm((prev) => ({ ...prev, [loc.id]: { ...f, expected_time: e.target.value } }))}
-              />
-              <button className="secondary" style={{ width: "auto" }} onClick={() => handleAssign(loc.id)}>Assign</button>
-            </div>
+            {coordinators.length > 0 ? (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <select
+                  style={{ flex: 1, minWidth: 160, marginBottom: 0 }}
+                  value={f.coordinator_id}
+                  onChange={(e) => setAssignForm((prev) => ({ ...prev, [loc.id]: { ...f, coordinator_id: e.target.value } }))}
+                >
+                  <option value="">Assign coordinator...</option>
+                  {coordinators.map((c) => (
+                    <option key={c.id} value={c.id}>{c.full_name || c.email}</option>
+                  ))}
+                </select>
+                <input
+                  type="time"
+                  style={{ width: 130, marginBottom: 0 }}
+                  value={f.expected_time}
+                  onChange={(e) => setAssignForm((prev) => ({ ...prev, [loc.id]: { ...f, expected_time: e.target.value } }))}
+                />
+                <button className="secondary" style={{ width: "auto" }} onClick={() => handleAssign(loc.id)}>Assign</button>
+              </div>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>No coordinators assigned to you yet.</p>
+            )}
           </div>
         );
       })}
 
-      {locations.length === 0 && <p className="muted">No sites yet — add one above.</p>}
+      {locations.length === 0 && <p className="muted">No sites yet. Add one above.</p>}
     </div>
   );
 }
