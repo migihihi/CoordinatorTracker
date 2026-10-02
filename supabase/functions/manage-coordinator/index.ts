@@ -27,6 +27,11 @@ function normalizeMobile(raw: string): string | null {
   return `+63${local}`;
 }
 
+// Case-insensitive exact match for PostgREST ilike (escape its wildcards).
+function ilikeExact(v: string): string {
+  return v.replace(/[\\%_]/g, (c) => "\\" + c);
+}
+
 // Easy to read out and type on a phone: no 0/O, 1/l/I.
 function tempPassword(): string {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -91,6 +96,11 @@ Deno.serve(async (req) => {
     const { data: byMobile } = await admin
       .from("profiles").select("full_name, role, admin_id").eq("mobile", mobile).maybeSingle();
     if (byMobile) return json({ error: `This mobile number already belongs to ${await describe(byMobile)}.` }, 409);
+    const { data: byName } = await admin
+      .from("profiles").select("full_name, role, admin_id").ilike("full_name", ilikeExact(fullName)).limit(1).maybeSingle();
+    if (byName) {
+      return json({ error: `Someone named "${fullName}" already has an account: ${await describe(byName)}. If this is a different person, add a middle initial or second name.` }, 409);
+    }
 
     // Sign-ups are closed; tell the database this email is being created by a PM.
     const { error: allowErr } = await admin
@@ -115,22 +125,36 @@ Deno.serve(async (req) => {
       .eq("id", created.user.id);
     if (pErr) {
       await admin.auth.admin.deleteUser(created.user.id); // undo, so no half-made account is left behind
-      const dup = /profiles_mobile_unique/.test(pErr.message);
-      return json({ error: dup ? "This mobile number is already used by another account." : pErr.message }, 400);
+      const msg = /profiles_mobile_unique/.test(pErr.message)
+        ? "This mobile number is already used by another account."
+        : /profiles_name_unique/.test(pErr.message)
+        ? "Someone with this name already has an account. Add a middle initial or second name."
+        : pErr.message;
+      return json({ error: msg }, 400);
     }
 
+    await admin.rpc("log_activity", {
+      p_actor: caller.id, p_category: "account", p_action: "coordinator_created",
+      p_summary: `Created a coordinator account for ${fullName}`, p_target: created.user.id,
+      p_details: { email, mobile, admin_id: adminId },
+    });
     return json({ ok: true, user_id: created.user.id, email, mobile, temp_password: password });
   }
 
   if (body.action === "reset_password") {
     const userId = body.user_id || "";
     const { data: target } = await admin
-      .from("profiles").select("id, role, admin_id, email").eq("id", userId).maybeSingle();
+      .from("profiles").select("id, role, admin_id, email, full_name").eq("id", userId).maybeSingle();
     if (!target) return json({ error: "Account not found" }, 404);
     if (target.role === "super_admin") return json({ error: "The super admin's password can't be reset here." }, 403);
     const allowed = isSuper || (target.role === "coordinator" && target.admin_id === caller.id);
     if (!allowed) return json({ error: "You can only reset passwords for your own coordinators." }, 403);
 
+    // Logged first, so the database knows this password change was a reset, not the person.
+    await admin.rpc("log_activity", {
+      p_actor: caller.id, p_category: "account", p_action: "password_reset",
+      p_summary: `Reset the password for ${target.full_name || target.email}`, p_target: userId,
+    });
     const password = tempPassword();
     const { error: uErr } = await admin.auth.admin.updateUserById(userId, { password });
     if (uErr) return json({ error: uErr.message }, 400);

@@ -15,7 +15,10 @@ export default function AdminNav({ me, title }) {
     { href: "/admin/locations", label: "Sites" },
     { href: "/admin/announcements", label: "Announcements" },
   ];
-  if (me?.isSuper) links.push({ href: "/admin/team", label: "Team" });
+  if (me?.isSuper) {
+    links.push({ href: "/admin/team", label: "Team" });
+    links.push({ href: "/admin/activity", label: "Activity" });
+  }
 
   async function handleLogout() {
     await supabase.auth.signOut();

@@ -17,6 +17,11 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// Case-insensitive exact match for PostgREST ilike (escape its wildcards).
+function ilikeExact(v: string): string {
+  return v.replace(/[\\%_]/g, (c) => "\\" + c);
+}
+
 function tempPassword(): string {
   const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
   const bytes = crypto.getRandomValues(new Uint8Array(8));
@@ -46,7 +51,7 @@ Deno.serve(async (req) => {
   let body: { full_name?: string; email?: string; role?: string };
   try { body = await req.json(); } catch { return json({ error: "Invalid request" }, 400); }
 
-  const fullName = (body.full_name || "").trim();
+  const fullName = (body.full_name || "").trim().replace(/\s+/g, " ");
   const email = (body.email || "").trim().toLowerCase();
   if (!fullName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return json({ error: "A name and a valid email are required" }, 400);
@@ -57,6 +62,13 @@ Deno.serve(async (req) => {
   // Existing account? Promote it instead of creating a new one.
   const { data: existing } = await admin
     .from("profiles").select("id, role").eq("email", email).maybeSingle();
+
+  // Names are unique too.
+  const { data: sameName } = await admin
+    .from("profiles").select("id, email").ilike("full_name", ilikeExact(fullName)).limit(2);
+  if ((sameName || []).some((p) => p.id !== existing?.id)) {
+    return json({ error: `Someone named "${fullName}" already has an account. If this is a different person, add a middle initial or second name.` }, 409);
+  }
 
   let userId: string;
   let password: string | null = null;
@@ -88,5 +100,12 @@ Deno.serve(async (req) => {
   const { error: updErr } = await admin.from("profiles").update(update).eq("id", userId);
   if (updErr) return json({ error: updErr.message }, 400);
 
+  await admin.rpc("log_activity", {
+    p_actor: userData.user.id, p_category: "account", p_action: password ? `${role}_created` : "role_changed",
+    p_summary: password
+      ? `Created ${label} account for ${fullName}`
+      : `Made ${fullName} ${label}${existing?.role ? ` (was ${existing.role === "hr_admin" ? "Admin" : "Coordinator"})` : ""}`,
+    p_target: userId, p_details: { email },
+  });
   return json({ ok: true, user_id: userId, role, created: !!password, email, temp_password: password });
 });
