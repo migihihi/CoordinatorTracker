@@ -1,6 +1,7 @@
-// Creates a new regular admin, or promotes an existing account. Callable only by
-// the super admin. A new admin gets a temporary password (shown to the super
-// admin to pass on) and must set their own password at first sign-in.
+// Creates a new admin or super admin, or promotes an existing account.
+//   { full_name, email, role?: "hr_admin" | "super_admin" }  (default "hr_admin")
+// Callable only by a super admin. A new account gets a temporary password (shown
+// to the super admin to pass on) and must set their own password at first sign-in.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const cors = {
@@ -37,10 +38,12 @@ Deno.serve(async (req) => {
   if (userErr || !userData?.user) return json({ error: "Not signed in" }, 401);
 
   const { data: caller } = await admin
-    .from("profiles").select("role").eq("id", userData.user.id).single();
-  if (caller?.role !== "super_admin") return json({ error: "Only the super admin can create admins" }, 403);
+    .from("profiles").select("role, active").eq("id", userData.user.id).single();
+  if (caller?.role !== "super_admin" || caller.active === false) {
+    return json({ error: "Only a super admin can create admins" }, 403);
+  }
 
-  let body: { full_name?: string; email?: string };
+  let body: { full_name?: string; email?: string; role?: string };
   try { body = await req.json(); } catch { return json({ error: "Invalid request" }, 400); }
 
   const fullName = (body.full_name || "").trim();
@@ -48,6 +51,8 @@ Deno.serve(async (req) => {
   if (!fullName || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return json({ error: "A name and a valid email are required" }, 400);
   }
+  const role = body.role === "super_admin" ? "super_admin" : "hr_admin";
+  const label = role === "super_admin" ? "a super admin" : "an admin";
 
   // Existing account? Promote it instead of creating a new one.
   const { data: existing } = await admin
@@ -56,7 +61,10 @@ Deno.serve(async (req) => {
   let userId: string;
   let password: string | null = null;
   if (existing) {
-    if (existing.role === "super_admin") return json({ error: "That person is already the super admin" }, 400);
+    if (existing.role === role) return json({ error: `That person is already ${label}.` }, 400);
+    if (existing.role === "super_admin") {
+      return json({ error: "That person is a super admin. Remove their super admin access first." }, 400);
+    }
     userId = existing.id;
   } else {
     // Sign-ups are closed; tell the database this email is being created by a PM.
@@ -75,10 +83,10 @@ Deno.serve(async (req) => {
     userId = created.user.id;
   }
 
-  const update: Record<string, unknown> = { role: "hr_admin", full_name: fullName, admin_id: null };
+  const update: Record<string, unknown> = { role, full_name: fullName, admin_id: null };
   if (password) update.must_change_password = true;
   const { error: updErr } = await admin.from("profiles").update(update).eq("id", userId);
   if (updErr) return json({ error: updErr.message }, 400);
 
-  return json({ ok: true, user_id: userId, created: !!password, email, temp_password: password });
+  return json({ ok: true, user_id: userId, role, created: !!password, email, temp_password: password });
 });
