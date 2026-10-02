@@ -1,9 +1,9 @@
-// Deletes check-in photos older than 90 days (the attendance records are kept).
+// Deletes check-in photos older than 60 days (the attendance records are kept).
 // Runs nightly from pg_cron. Takes no input and only ever applies this fixed
 // policy, so it's safe for it to be callable without a login.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-const KEEP_DAYS = 90;
+const KEEP_DAYS = 60;
 const BATCH = 200;
 
 function json(body: unknown, status = 200) {

@@ -380,7 +380,7 @@ export default function AdminPage() {
                       <td style={{ whiteSpace: "normal", maxWidth: 220 }}>{log.notes || "—"}</td>
                       <td>
                         {log.photos_deleted_at ? (
-                          <span className="muted" title="Photos are kept for 90 days">Deleted (90 days)</span>
+                          <span className="muted" title="Photos are kept for 60 days">Deleted (60 days)</span>
                         ) : log.photo_url || log.site_photo_url ? (
                           <span className="photo-links">
                             {log.photo_url && <button className="link" onClick={() => viewPhoto(log.photo_url)}>Selfie</button>}

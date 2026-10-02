@@ -51,8 +51,8 @@ function fmtHrs(inIso, outIso) {
 }
 // Check-in: selfie + photo of the site (back camera). Check-out: selfie only.
 const CHECKIN_SHOTS = [
-  { facing: "user", title: "Selfie", hint: "Center your face in the frame.", maxDim: 720, quality: 0.65 },
-  { facing: "environment", title: "Photo of the site", hint: "Show the store front, signage or display area.", maxDim: 900, quality: 0.6 },
+  { facing: "user", title: "Selfie", hint: "Center your face in the frame.", maxDim: 560, quality: 0.55 },
+  { facing: "environment", title: "Photo of the site", hint: "Show the store front, signage or display area.", maxDim: 720, quality: 0.55 },
 ];
 const CHECKOUT_SHOTS = [CHECKIN_SHOTS[0]];
 
