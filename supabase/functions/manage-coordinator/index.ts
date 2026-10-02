@@ -76,12 +76,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    // One person, one account.
+    // One person, one account. Regular admins never see names of admin or
+    // super admin accounts; they only learn that the email/mobile is taken.
     const describe = async (p: { full_name: string | null; role: string; admin_id: string | null }) => {
-      if (p.role !== "coordinator") return `${p.full_name || "someone"} (an admin)`;
+      if (p.role !== "coordinator") return isSuper ? `${p.full_name || "someone"} (an admin)` : "an admin account";
       if (!p.admin_id) return `${p.full_name || "a coordinator"} (no admin yet)`;
-      const { data: a } = await admin.from("profiles").select("full_name").eq("id", p.admin_id).maybeSingle();
-      return `${p.full_name || "a coordinator"} (under ${a?.full_name || "another admin"})`;
+      const { data: a } = await admin.from("profiles").select("full_name, role").eq("id", p.admin_id).maybeSingle();
+      const owner = a?.role === "super_admin" && !isSuper ? "a super admin" : a?.full_name || "another admin";
+      return `${p.full_name || "a coordinator"} (under ${owner})`;
     };
     const { data: byEmail } = await admin
       .from("profiles").select("full_name, role, admin_id").eq("email", email).maybeSingle();
