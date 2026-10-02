@@ -157,8 +157,12 @@ export default function AdminPage() {
 
       const now = new Date();
       const checkedInToday = new Set((todayIns || []).map((l) => `${l.coordinator_id}_${l.location_id}`));
+      const todayKey = localDateKey();
+      const onLeaveToday = new Set((leaveData || []).filter((l) => l.leave_date === todayKey).map((l) => l.coordinator_id));
       setMissed((assignData || []).filter((a) => {
         if (!a.expected_time) return false;
+        if (onLeaveToday.has(a.coordinator_id)) return false; // marked day off / leave
+
         if (a.profiles?.active === false || a.locations?.active === false) return false;
         const [h, m] = a.expected_time.split(":").map(Number);
         const expected = new Date();
@@ -198,15 +202,22 @@ export default function AdminPage() {
 
   async function viewPhoto(path) {
     if (!path) return;
+    setError("");
     if (photoUrls[path]) {
       window.open(photoUrls[path], "_blank");
       return;
     }
+    // Open the tab right away (phones block tabs opened after a delay), then point it at the photo.
+    const tab = window.open("", "_blank");
     const { data, error: err } = await supabase.storage.from("attendance-photos").createSignedUrl(path, 60 * 10);
-    if (!err && data?.signedUrl) {
-      setPhotoUrls((prev) => ({ ...prev, [path]: data.signedUrl }));
-      window.open(data.signedUrl, "_blank");
+    if (err || !data?.signedUrl) {
+      if (tab) tab.close();
+      setError("Couldn't open that photo. It may have been deleted.");
+      return;
     }
+    setPhotoUrls((prev) => ({ ...prev, [path]: data.signedUrl }));
+    if (tab) tab.location.href = data.signedUrl;
+    else window.location.href = data.signedUrl;
   }
 
   async function exportCsv() {

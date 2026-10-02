@@ -59,6 +59,8 @@ function validate(form) {
   if (!form.name.trim()) return "Enter a site name.";
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "Set the site's location: search, tap the map, or use your current location.";
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return "That latitude/longitude doesn't look right.";
+  const r = parseInt(form.radius_meters);
+  if (form.radius_meters !== "" && (!Number.isFinite(r) || r < 10 || r > 5000)) return "The check-in radius must be between 10 and 5,000 meters.";
   return null;
 }
 
@@ -217,8 +219,11 @@ export default function LocationsAdminPage() {
     load(me);
   }
 
-  async function handleRemoveAssignment(id) {
-    await supabase.from("location_assignments").delete().eq("id", id);
+  async function handleRemoveAssignment(a, loc) {
+    setError("");
+    if (!window.confirm(`Remove ${a.profiles?.full_name || "this coordinator"} from ${loc.name}?`)) return;
+    const { error: err } = await supabase.from("location_assignments").delete().eq("id", a.id);
+    if (err) { setError(err.message); return; }
     load(me);
   }
 
@@ -287,7 +292,7 @@ export default function LocationsAdminPage() {
                 {locAssignments.map((a) => (
                   <div key={a.id} className="site-line">
                     <span>{a.profiles?.full_name} {a.expected_time ? `· expected ${a.expected_time.slice(0, 5)}` : ""}</span>
-                    <button className="link" onClick={() => handleRemoveAssignment(a.id)}>Remove</button>
+                    <button className="link" onClick={() => handleRemoveAssignment(a, loc)}>Remove</button>
                   </div>
                 ))}
               </div>
@@ -311,10 +316,12 @@ export default function LocationsAdminPage() {
                   value={f.expected_time}
                   onChange={(e) => setAssignForm((prev) => ({ ...prev, [loc.id]: { ...f, expected_time: e.target.value } }))}
                 />
-                <button className="secondary" style={{ width: "auto" }} onClick={() => handleAssign(loc.id)}>Assign</button>
+                <button className="secondary" style={{ width: "auto" }} disabled={!f.coordinator_id} onClick={() => handleAssign(loc.id)}>Assign</button>
               </div>
             ) : (
-              <p className="muted" style={{ margin: 0 }}>No coordinators assigned to you yet.</p>
+              <p className="muted" style={{ margin: 0 }}>
+                {me.isSuper ? "No active coordinators yet." : "No coordinators assigned to you yet."}
+              </p>
             ))}
           </div>
         );

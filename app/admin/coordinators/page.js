@@ -223,9 +223,14 @@ export default function CoordinatorsPage() {
     load(me);
   }
 
-  async function removeSite(assignmentId) {
+  async function removeSite(a, c) {
     setError("");
-    const { error: err } = await supabase.from("location_assignments").delete().eq("id", assignmentId);
+    const site = siteById[a.location_id]?.name || allSiteNames[a.location_id] || "this site";
+    const st = statusFor(c.id);
+    const checkedInHere = st.cls === "ok" && todayLogs.filter((l) => l.coordinator_id === c.id).slice(-1)[0]?.location_id === a.location_id;
+    const warn = checkedInHere ? `\n\n${c.full_name} is checked in there right now and won't be able to check out from the app.` : "";
+    if (!window.confirm(`Remove ${site} from ${c.full_name || c.email}?${warn}`)) return;
+    const { error: err } = await supabase.from("location_assignments").delete().eq("id", a.id);
     if (err) setError(err.message);
     load(me);
   }
@@ -406,7 +411,7 @@ export default function CoordinatorsPage() {
                     {siteById[a.location_id]?.name || allSiteNames[a.location_id] || "Site"}
                     {a.expected_time && <span className="muted"> · expected {a.expected_time.slice(0, 5)}</span>}
                   </span>
-                  <button className="link" onClick={() => removeSite(a.id)}>Remove</button>
+                  <button className="link" onClick={() => removeSite(a, c)}>Remove</button>
                 </div>
               ))}
             </div>
