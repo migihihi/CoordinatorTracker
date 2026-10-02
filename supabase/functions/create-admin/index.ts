@@ -43,10 +43,11 @@ Deno.serve(async (req) => {
   if (userErr || !userData?.user) return json({ error: "Not signed in" }, 401);
 
   const { data: caller } = await admin
-    .from("profiles").select("role, active").eq("id", userData.user.id).single();
+    .from("profiles").select("role, active, must_change_password").eq("id", userData.user.id).single();
   if (caller?.role !== "super_admin" || caller.active === false) {
     return json({ error: "Only a super admin can create admins" }, 403);
   }
+  if (caller.must_change_password) return json({ error: "Set your own password first." }, 403);
 
   let body: { full_name?: string; email?: string; role?: string };
   try { body = await req.json(); } catch { return json({ error: "Invalid request" }, 400); }
@@ -98,7 +99,12 @@ Deno.serve(async (req) => {
   const update: Record<string, unknown> = { role, full_name: fullName, admin_id: null };
   if (password) update.must_change_password = true;
   const { error: updErr } = await admin.from("profiles").update(update).eq("id", userId);
-  if (updErr) return json({ error: updErr.message }, 400);
+  if (updErr) {
+    if (password) await admin.auth.admin.deleteUser(userId); // undo a half-made new account
+    return json({ error: /profiles_name_unique/.test(updErr.message)
+      ? "Someone with this name already has an account. Add a middle initial or second name."
+      : updErr.message }, 400);
+  }
 
   await admin.rpc("log_activity", {
     p_actor: userData.user.id, p_category: "account", p_action: password ? `${role}_created` : "role_changed",

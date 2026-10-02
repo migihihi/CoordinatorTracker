@@ -12,6 +12,9 @@ import {
   flushQueue,
   submitLeaveRecord,
   deleteTodaysLeaveRecord,
+  isPermanentError,
+  readRejected,
+  dismissRejected,
 } from "../../lib/offlineQueue";
 
 const REASON_LABELS = { day_off: "Day Off", sick_leave: "Sick Leave", absent: "Absent" };
@@ -119,6 +122,7 @@ export default function CheckinPage() {
   const [dismissedIds, setDismissedIds] = useState(() => new Set());
   const [usingSaved, setUsingSaved] = useState(false); // showing data saved on the phone (offline)
   const [cameraSteps, setCameraSteps] = useState(null); // in-app camera open when set
+  const [rejected, setRejected] = useState([]); // saved check-ins the server refused
 
   const showToast = (msg) => {
     setToast(msg);
@@ -233,6 +237,8 @@ export default function CheckinPage() {
     }
 
     setPendingCount(readQueue().filter((r) => r.coordinator_id === uid).length);
+    setRejected(readRejected().filter((r) => r.coordinator_id === uid));
+    setHistoryRows(null); // reload History next time it's opened
   }, []);
 
   const loadHistory = useCallback(async (uid) => {
@@ -300,11 +306,16 @@ export default function CheckinPage() {
 
       let profile = null;
       try {
-        const { data } = await supabase
+        const { data, error: pErr } = await supabase
           .from("profiles")
           .select("full_name, role, active, must_change_password")
           .eq("id", uid)
-          .single();
+          .maybeSingle();
+        if (!pErr && !data && !user.offline && navigator.onLine) {
+          // the account no longer exists
+          await signOutDeactivated(router);
+          return;
+        }
         profile = data;
         if (data?.must_change_password) {
           router.replace("/change-password");
@@ -456,13 +467,16 @@ export default function CheckinPage() {
           try { localStorage.removeItem(draftKey(userId, site.id)); } catch {}
           setDraftNote("");
         }
+      } else if (isPermanentError(result.error)) {
+        // the server refused it (e.g. site no longer assigned): saving it for later won't help
+        throw new Error(result.error.message || "This check-in couldn't be saved.");
       } else {
         try {
           enqueue(record);
         } catch {
           throw new Error("Your phone has no room left for offline check-ins. Connect to the internet so they can sync, then try again.");
         }
-        showToast("No connection — saved, will sync automatically");
+        showToast(navigator.onLine ? "Couldn't upload yet — saved, will retry automatically" : "No connection — saved, will sync automatically");
       }
       await loadData(userId);
     } catch (err) {
@@ -590,11 +604,28 @@ export default function CheckinPage() {
             </div>
           )}
 
+          {rejected.map((r) => (
+            <div className="error-box" key={r.id}>
+              <div>
+                A {r.type === "check_out" ? "check-out" : "check-in"} saved on {new Date(r.captured_at).toLocaleString()} couldn&apos;t be uploaded: {r.reason}
+                {" "}Let your project manager know.
+              </div>
+              <button className="link" style={{ padding: 0, marginTop: 4 }}
+                onClick={() => { dismissRejected(r.id); setRejected((prev) => prev.filter((x) => x.id !== r.id)); }}>
+                Dismiss
+              </button>
+            </div>
+          ))}
+
           {error && <div className="error-box">{error}</div>}
 
           {sites.length === 0 && (
             <div className="card">
-              <p className="muted">No sites assigned to you yet. Ask HR to assign you a location.</p>
+              <p className="muted">
+                {isHrAdmin
+                  ? "This is the coordinator check-in screen. Admin accounts aren't assigned to sites."
+                  : "No sites assigned to you yet. Ask your project manager to assign you a site."}
+              </p>
             </div>
           )}
 

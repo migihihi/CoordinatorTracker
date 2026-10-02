@@ -65,7 +65,9 @@ export default function TeamPage() {
   async function setActive(person, active) {
     setError("");
     const who = person.full_name || person.email;
-    if (!active && !window.confirm(`Deactivate ${who}? They won't be able to sign in. Their history is kept, and you can reactivate them later.`)) return;
+    const theirs = people.filter((p) => p.role === "coordinator" && p.admin_id === person.id && p.active !== false).length;
+    const note = theirs ? `\n\nTheir ${theirs} coordinator${theirs === 1 ? "" : "s"} will still be able to check in, but only super admins will see them until you move them to another admin.` : "";
+    if (!active && !window.confirm(`Deactivate ${who}? They won't be able to sign in. Their history is kept, and you can reactivate them later.${note}`)) return;
     setSavingId(person.id);
     const { error: err } = await supabase.from("profiles").update({ active }).eq("id", person.id);
     setSavingId(null);
@@ -90,6 +92,24 @@ export default function TeamPage() {
     if (err) { setError(err.message); return; }
     flash(`${who} is no longer an admin.${extra}`);
     load();
+  }
+
+  async function resetPassword(person) {
+    setError("");
+    const who = person.full_name || person.email;
+    if (!window.confirm(`Make a new temporary password for ${who}? Their current password will stop working, and they'll set a new one when they sign in.`)) return;
+    setSavingId(person.id);
+    const { data, error: fnErr } = await supabase.functions.invoke("manage-coordinator", {
+      body: { action: "reset_password", user_id: person.id },
+    });
+    let message = data?.error;
+    if (fnErr) {
+      try { message = (await fnErr.context.json()).error; } catch { message = fnErr.message; }
+    }
+    setSavingId(null);
+    if (message) { setError(message); return; }
+    setCreds({ name: who, email: person.email, password: data.temp_password, reset: true });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function flash(msg) {
@@ -209,6 +229,11 @@ export default function TeamPage() {
                           <span className="muted">Another super admin can change your access</span>
                         ) : (
                           <>
+                            {p.active !== false && (
+                              <button className="link" disabled={savingId === p.id} onClick={() => resetPassword(p)}>
+                                Reset password
+                              </button>
+                            )}
                             <button className="link" disabled={savingId === p.id || lastOne} onClick={() => setActive(p, p.active === false)}>
                               {p.active === false ? "Reactivate" : "Deactivate"}
                             </button>
@@ -267,6 +292,11 @@ export default function TeamPage() {
                   <td>{people.filter((p) => p.role === "coordinator" && p.admin_id === a.id).length}</td>
                   <td>{a.active === false ? <span className="badge flagged">Deactivated</span> : <span className="badge ok">Active</span>}</td>
                   <td style={{ whiteSpace: "nowrap" }}>
+                    {a.active !== false && (
+                      <button className="link" disabled={savingId === a.id} onClick={() => resetPassword(a)}>
+                        Reset password
+                      </button>
+                    )}
                     <button className="link" disabled={savingId === a.id} onClick={() => setActive(a, a.active === false)}>
                       {a.active === false ? "Reactivate" : "Deactivate"}
                     </button>
@@ -322,6 +352,11 @@ export default function TeamPage() {
                     onChange={(e) => setAdminFor(c.id, e.target.value)}
                   >
                     <option value="">Unassigned</option>
+                    {c.admin_id && !activeAdmins.some((a) => a.id === c.admin_id) && (
+                      <option value={c.admin_id}>
+                        {people.find((p) => p.id === c.admin_id)?.full_name || "Unknown"} (deactivated)
+                      </option>
+                    )}
                     {activeAdmins.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.full_name || a.email}{a.role === "super_admin" ? " (super admin)" : ""}
