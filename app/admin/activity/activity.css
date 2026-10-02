@@ -11,10 +11,7 @@
 .act-account { background: #EAF0FE; color: var(--primary); }
 .act-site { background: #E3F2E6; color: var(--sea); }
 .act-assignment { background: #F3F5EF; color: #4d5a2a; }
-.act-announcement { background: var(--warn-bg); color: var(--warn); }
-.act-attendance { background: #e6f4f1; color: #1d6b5a; }
-.act-leave { background: #f3ecfb; color: #6b3fa0; }
-.act-signin { background: #eef1f5; color: var(--muted); }
+.act-export { background: var(--warn-bg); color: var(--warn); }
 @media (max-width: 600px) {
   .activity-row { flex-direction: column; gap: 2px; }
   .activity-time { width: auto; }
