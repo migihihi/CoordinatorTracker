@@ -54,11 +54,12 @@ Deno.serve(async (req) => {
   if (userErr || !userData?.user) return json({ error: "Not signed in" }, 401);
 
   const { data: caller } = await admin
-    .from("profiles").select("id, role, active").eq("id", userData.user.id).single();
+    .from("profiles").select("id, role, active, must_change_password").eq("id", userData.user.id).single();
   const isSuper = caller?.role === "super_admin";
   if (!caller || caller.active === false || !(isSuper || caller.role === "hr_admin")) {
     return json({ error: "Only admins can manage coordinators" }, 403);
   }
+  if (caller.must_change_password) return json({ error: "Set your own password first." }, 403);
 
   let body: Record<string, string | null | undefined>;
   try { body = await req.json(); } catch { return json({ error: "Invalid request" }, 400); }
@@ -82,14 +83,17 @@ Deno.serve(async (req) => {
       }
     }
 
-    // One person, one account. Regular admins never see names of admin or
-    // super admin accounts; they only learn that the email/mobile is taken.
+    // One person, one account. A regular admin only learns names of their own
+    // coordinators; anyone else's account is described without names.
     const describe = async (p: { full_name: string | null; role: string; admin_id: string | null }) => {
-      if (p.role !== "coordinator") return isSuper ? `${p.full_name || "someone"} (an admin)` : "an admin account";
+      if (!isSuper) {
+        if (p.role === "coordinator" && p.admin_id === caller.id) return `${p.full_name || "a coordinator"} (one of your coordinators)`;
+        return p.role === "coordinator" ? "a coordinator under another admin" : "an admin account";
+      }
+      if (p.role !== "coordinator") return `${p.full_name || "someone"} (an admin)`;
       if (!p.admin_id) return `${p.full_name || "a coordinator"} (no admin yet)`;
-      const { data: a } = await admin.from("profiles").select("full_name, role").eq("id", p.admin_id).maybeSingle();
-      const owner = a?.role === "super_admin" && !isSuper ? "a super admin" : a?.full_name || "another admin";
-      return `${p.full_name || "a coordinator"} (under ${owner})`;
+      const { data: a } = await admin.from("profiles").select("full_name").eq("id", p.admin_id).maybeSingle();
+      return `${p.full_name || "a coordinator"} (under ${a?.full_name || "another admin"})`;
     };
     const { data: byEmail } = await admin
       .from("profiles").select("full_name, role, admin_id").eq("email", email).maybeSingle();
@@ -100,7 +104,7 @@ Deno.serve(async (req) => {
     const { data: byName } = await admin
       .from("profiles").select("full_name, role, admin_id").ilike("full_name", ilikeExact(fullName)).limit(1).maybeSingle();
     if (byName) {
-      return json({ error: `Someone named "${fullName}" already has an account: ${await describe(byName)}. If this is a different person, add a middle initial or second name.` }, 409);
+      return json({ error: `That name is already used by ${await describe(byName)}. If this is a different person, add a middle initial or second name.` }, 409);
     }
 
     // Sign-ups are closed; tell the database this email is being created by a PM.

@@ -59,6 +59,10 @@ function validate(form) {
   if (!form.name.trim()) return "Enter a site name.";
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "Set the site's location: search, tap the map, or use your current location.";
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return "That latitude/longitude doesn't look right.";
+  const radius = parseInt(form.radius_meters, 10);
+  if (form.radius_meters !== "" && (!Number.isFinite(radius) || radius < 10 || radius > 5000)) {
+    return "Set the check-in radius between 10 and 5000 meters.";
+  }
   return null;
 }
 
@@ -218,7 +222,10 @@ export default function LocationsAdminPage() {
   }
 
   async function handleRemoveAssignment(id) {
-    await supabase.from("location_assignments").delete().eq("id", id);
+    setError("");
+    if (!window.confirm("Remove this coordinator from the site? They won't be able to check in there any more.")) return;
+    const { error: err } = await supabase.from("location_assignments").delete().eq("id", id);
+    if (err) { setError(err.message); return; }
     load(me);
   }
 

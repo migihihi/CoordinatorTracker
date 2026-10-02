@@ -104,7 +104,7 @@ export default function LoginPage() {
           )}
           {mode === "forgot" && (
             <p className="muted" style={{ margin: "0 0 4px", fontSize: "0.85rem" }}>
-              No email arriving? Your project manager can reset your password from the admin page.
+              No email arriving? Your project manager (or, for admins, a super admin) can reset your password.
             </p>
           )}
           {mode === "forgot" && (

@@ -330,7 +330,8 @@ tr.flagged-row { background: #fef2f2; }
 .admin-header h1 { font-size: 1.25rem; }
 .admin-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
-.tab-row { display: flex; gap: 6px; margin-bottom: 14px; background: #EEF2E8; padding: 4px; border-radius: 12px; width: fit-content; }
+.tab-row { display: flex; gap: 6px; margin-bottom: 14px; background: #EEF2E8; padding: 4px; border-radius: 12px; width: fit-content; max-width: 100%; overflow-x: auto; }
+.tab-row .tab-btn { white-space: nowrap; }
 .tab-btn {
   width: auto; background: transparent; color: var(--muted); font-weight: 700; font-size: 0.85rem;
   padding: 8px 14px; border-radius: 9px;
