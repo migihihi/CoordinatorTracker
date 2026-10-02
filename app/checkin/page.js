@@ -5,6 +5,7 @@ import { supabase } from "../../lib/supabaseClient";
 import { distanceMeters } from "../../lib/geo";
 import CameraCapture from "./CameraCapture";
 import { getCurrentUser, localDateKey, signOutDeactivated } from "../../lib/session";
+import { identifyUser, reportError } from "../../lib/monitoring";
 import {
   readQueue,
   enqueue,
@@ -331,6 +332,7 @@ export default function CheckinPage() {
         await signOutDeactivated(router);
         return;
       }
+      identifyUser(uid, profile?.role);
       setFullName(profile?.full_name || user.email);
       setIsHrAdmin(profile?.role === "hr_admin" || profile?.role === "super_admin");
 
@@ -471,6 +473,7 @@ export default function CheckinPage() {
         // the server refused it (e.g. site no longer assigned): saving it for later won't help
         throw new Error(result.error.message || "This check-in couldn't be saved.");
       } else {
+        reportError(result.error, { where: "upload", type: action.type, queued: true }, "warning");
         try {
           enqueue(record);
         } catch {
@@ -489,6 +492,7 @@ export default function CheckinPage() {
           setError("Couldn't get your location. Try again in a moment.");
         }
       } else {
+        reportError(err, { where: "check-in" });
         setError(err.message || "Could not capture location/photo. Check permissions and try again.");
       }
     } finally {
