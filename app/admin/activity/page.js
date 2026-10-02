@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
 import { requireAdmin, fetchAll, localDateKey, startOfLocalDay } from "../../../lib/adminAuth";
@@ -32,7 +32,8 @@ const PRESETS = [
 ];
 
 function csvCell(v) {
-  const s = v == null ? "" : String(v);
+  let s = v == null ? "" : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // stop spreadsheets running it as a formula
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
@@ -62,6 +63,7 @@ export default function ActivityPage() {
   const [hasMore, setHasMore] = useState(false);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const requestRef = useRef(0); // ignore replies to filters that have since changed
 
   useEffect(() => {
     (async () => {
@@ -101,8 +103,10 @@ export default function ActivityPage() {
     if (!fromDate || !toDate || fromDate > toDate) return;
     setBusy(true);
     setError("");
+    const req = ++requestRef.current;
     const offset = append ? rows.length : 0;
     const { data, error: err } = await buildQuery().range(offset, offset + PAGE);
+    if (req !== requestRef.current) return;
     setBusy(false);
     if (err) { setError(err.message); return; }
     const page = (data || []).slice(0, PAGE);
