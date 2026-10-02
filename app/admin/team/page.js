@@ -6,6 +6,13 @@ import { requireAdmin } from "../../../lib/adminAuth";
 import AdminNav from "../AdminNav";
 import CredentialsCard from "../CredentialsCard";
 
+// Error text from an edge function call, whether it failed or returned { error }.
+async function fnError(data, fnErr) {
+  if (data?.error) return data.error;
+  if (!fnErr) return "";
+  try { return (await fnErr.context.json()).error || fnErr.message; } catch { return fnErr.message; }
+}
+
 // Super admin only: create admins and super admins, assign coordinators to admins.
 export default function TeamPage() {
   const router = useRouter();
@@ -132,6 +139,21 @@ export default function TeamPage() {
     if (err) { setError(err.message); return; }
     flash(`${who} is now a regular admin.`);
     load();
+  }
+
+  async function resetAdminPassword(person) {
+    setError("");
+    const who = person.full_name || person.email;
+    if (!window.confirm(`Make a new temporary password for ${who}? Their current password will stop working, and they'll set a new one when they sign in.`)) return;
+    setSavingId(person.id);
+    const { data, error: fnErr } = await supabase.functions.invoke("manage-coordinator", {
+      body: { action: "reset_password", user_id: person.id },
+    });
+    const message = await fnError(data, fnErr);
+    setSavingId(null);
+    if (message) { setError(message); return; }
+    setCreds({ name: who, email: person.email, password: data.temp_password, reset: true });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function setAdminFor(coordId, adminId) {
@@ -270,6 +292,11 @@ export default function TeamPage() {
                     <button className="link" disabled={savingId === a.id} onClick={() => setActive(a, a.active === false)}>
                       {a.active === false ? "Reactivate" : "Deactivate"}
                     </button>
+                    {a.active !== false && (
+                      <button className="link" disabled={savingId === a.id} onClick={() => resetAdminPassword(a)}>
+                        Reset password
+                      </button>
+                    )}
                     <button className="link" style={{ color: "var(--danger)" }} disabled={savingId === a.id} onClick={() => removeAdminRights(a)}>
                       Remove admin rights
                     </button>
@@ -322,6 +349,11 @@ export default function TeamPage() {
                     onChange={(e) => setAdminFor(c.id, e.target.value)}
                   >
                     <option value="">Unassigned</option>
+                    {c.admin_id && !activeAdmins.some((a) => a.id === c.admin_id) && (
+                      <option value={c.admin_id}>
+                        {people.find((p) => p.id === c.admin_id)?.full_name || "Admin"} (deactivated)
+                      </option>
+                    )}
                     {activeAdmins.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.full_name || a.email}{a.role === "super_admin" ? " (super admin)" : ""}
