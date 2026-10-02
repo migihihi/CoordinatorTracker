@@ -1,6 +1,7 @@
 // Project managers (admins) create coordinator accounts and reset their passwords.
 //   { action: "create", full_name, email, mobile, admin_id? }  -> { user_id, temp_password }
 //   { action: "reset_password", user_id }                     -> { temp_password }
+//   { action: "delete", user_id }                              -> { ok }  (only accounts with no history)
 // New/reset accounts get a temporary password that the PM passes on by text;
 // the coordinator must set their own password at first sign-in.
 // Callable by an active admin (their own coordinators) or the super admin (anyone).
@@ -161,6 +162,38 @@ Deno.serve(async (req) => {
     const { error: fErr } = await admin.from("profiles").update({ must_change_password: true }).eq("id", userId);
     if (fErr) return json({ error: fErr.message }, 400);
     return json({ ok: true, email: target.email, temp_password: password });
+  }
+
+  if (body.action === "delete") {
+    const userId = body.user_id || "";
+    const { data: target } = await admin
+      .from("profiles").select("id, role, admin_id, email, full_name").eq("id", userId).maybeSingle();
+    if (!target) return json({ error: "Account not found" }, 404);
+    if (target.role !== "coordinator") return json({ error: "Only coordinator accounts can be deleted here." }, 403);
+    const allowed = isSuper || target.admin_id === caller.id;
+    if (!allowed) return json({ error: "You can only delete your own coordinators." }, 403);
+
+    // Never erase attendance history: accounts with records can only be deactivated.
+    const [{ count: logs }, { count: leaves }] = await Promise.all([
+      admin.from("attendance_logs").select("id", { count: "exact", head: true }).eq("coordinator_id", userId),
+      admin.from("leave_records").select("id", { count: "exact", head: true }).eq("coordinator_id", userId),
+    ]);
+    if ((logs || 0) + (leaves || 0) > 0) {
+      const parts = [];
+      if (logs) parts.push(`${logs} check-in record${logs === 1 ? "" : "s"}`);
+      if (leaves) parts.push(`${leaves} leave record${leaves === 1 ? "" : "s"}`);
+      return json({ error: `${target.full_name || target.email} has ${parts.join(" and ")}, so the account can't be deleted. Deactivate it instead to block access and keep the history.` }, 409);
+    }
+
+    await admin.rpc("log_activity", {
+      p_actor: caller.id, p_category: "account", p_action: "account_deleted",
+      p_summary: `Deleted the coordinator account for ${target.full_name || target.email}`, p_target: userId,
+      p_details: { email: target.email },
+    });
+    // Removes the login; the profile, site assignments and announcement recipients go with it.
+    const { error: dErr } = await admin.auth.admin.deleteUser(userId);
+    if (dErr) return json({ error: dErr.message }, 400);
+    return json({ ok: true });
   }
 
   return json({ error: "Unknown action" }, 400);

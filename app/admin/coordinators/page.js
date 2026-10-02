@@ -163,6 +163,22 @@ export default function CoordinatorsPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  async function deleteCoordinator(c) {
+    setError("");
+    const who = c.full_name || c.email;
+    if (!window.confirm(`Permanently delete ${who}'s account? This can't be undone.\n\nOnly accounts with no check-ins or leave records can be deleted. For anyone with history, use Deactivate instead.`)) return;
+    setSavingId(c.id);
+    const { data, error: fnErr } = await supabase.functions.invoke("manage-coordinator", {
+      body: { action: "delete", user_id: c.id },
+    });
+    const message = await fnError(data, fnErr);
+    setSavingId(null);
+    if (message) { setError(message); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+    setPeople((prev) => prev.filter((p) => p.id !== c.id));
+    setAssignments((prev) => prev.filter((a) => a.coordinator_id !== c.id));
+    flash(`${who}'s account was deleted.`);
+  }
+
   async function saveMobile(c) {
     setError("");
     const mobile = normalizeMobile(mobileEdit?.value);
@@ -371,6 +387,10 @@ export default function CoordinatorsPage() {
                 <button className="link" style={{ fontSize: "0.85rem", color: inactive ? "var(--primary)" : "var(--danger)" }}
                   disabled={savingId === c.id} onClick={() => setActive(c, inactive)}>
                   {inactive ? "Reactivate" : "Deactivate"}
+                </button>
+                <button className="link" style={{ fontSize: "0.85rem", color: "var(--danger)" }}
+                  disabled={savingId === c.id} onClick={() => deleteCoordinator(c)}>
+                  Delete
                 </button>
               </div>
             </div>
