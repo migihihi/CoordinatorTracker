@@ -1,6 +1,6 @@
-// Creates (invites) a new regular admin. Callable only by a super admin.
-// The new admin receives an email with a link to set their password, which
-// lands on /reset-password in the app.
+// Creates a new regular admin, or promotes an existing account. Callable only by
+// the super admin. A new admin gets a temporary password (shown to the super
+// admin to pass on) and must set their own password at first sign-in.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const cors = {
@@ -14,6 +14,13 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...cors, "Content-Type": "application/json" },
   });
+}
+
+function tempPassword(): string {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  const s = Array.from(bytes, (b) => chars[b % chars.length]).join("");
+  return `Rera-${s.slice(0, 4)}-${s.slice(4)}`;
 }
 
 Deno.serve(async (req) => {
@@ -33,7 +40,7 @@ Deno.serve(async (req) => {
     .from("profiles").select("role").eq("id", userData.user.id).single();
   if (caller?.role !== "super_admin") return json({ error: "Only the super admin can create admins" }, 403);
 
-  let body: { full_name?: string; email?: string; redirect_to?: string };
+  let body: { full_name?: string; email?: string };
   try { body = await req.json(); } catch { return json({ error: "Invalid request" }, 400); }
 
   const fullName = (body.full_name || "").trim();
@@ -42,38 +49,36 @@ Deno.serve(async (req) => {
     return json({ error: "A name and a valid email are required" }, 400);
   }
 
-  // Only allow redirects back to our own app.
-  const origin = req.headers.get("origin") || "";
-  const allowed = /^https:\/\/(attendance\.reracorp\.com|[a-z0-9-]+\.vercel\.app)$/;
-  const redirectTo = allowed.test(origin)
-    ? `${origin}/reset-password`
-    : "https://attendance.reracorp.com/reset-password";
-
-  // Existing account? Promote it instead of inviting.
+  // Existing account? Promote it instead of creating a new one.
   const { data: existing } = await admin
     .from("profiles").select("id, role").eq("email", email).maybeSingle();
 
   let userId: string;
-  let invited = false;
+  let password: string | null = null;
   if (existing) {
     if (existing.role === "super_admin") return json({ error: "That person is already the super admin" }, 400);
     userId = existing.id;
   } else {
-    const { data: inv, error: invErr } = await admin.auth.admin.inviteUserByEmail(email, {
-      data: { full_name: fullName },
-      redirectTo,
+    // Sign-ups are closed; tell the database this email is being created by a PM.
+    const { error: allowErr } = await admin
+      .from("account_provisions")
+      .upsert({ email, created_at: new Date().toISOString(), used_at: null });
+    if (allowErr) return json({ error: allowErr.message }, 500);
+    password = tempPassword();
+    const { data: created, error: cErr } = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { full_name: fullName },
     });
-    if (invErr || !inv?.user) return json({ error: invErr?.message || "Could not send invite" }, 400);
-    userId = inv.user.id;
-    invited = true;
+    if (cErr || !created?.user) return json({ error: cErr?.message || "Could not create the account" }, 400);
+    userId = created.user.id;
   }
 
-  // Profile row is created by the on_auth_user_created trigger; set role + name.
-  const { error: updErr } = await admin
-    .from("profiles")
-    .update({ role: "hr_admin", full_name: fullName, admin_id: null })
-    .eq("id", userId);
+  const update: Record<string, unknown> = { role: "hr_admin", full_name: fullName, admin_id: null };
+  if (password) update.must_change_password = true;
+  const { error: updErr } = await admin.from("profiles").update(update).eq("id", userId);
   if (updErr) return json({ error: updErr.message }, 400);
 
-  return json({ ok: true, user_id: userId, invited });
+  return json({ ok: true, user_id: userId, created: !!password, email, temp_password: password });
 });
