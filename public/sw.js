@@ -3,7 +3,7 @@
 // - App code (/_next/static): saved on first use; file names change on every
 //   deploy, so a saved copy is never stale.
 // - Supabase and other outside requests are never touched.
-const VERSION = "v2";
+const VERSION = "v3";
 const PAGES = `pages-${VERSION}`;
 const ASSETS = `assets-${VERSION}`;
 const APP_PAGES = ["/", "/checkin", "/login"];
