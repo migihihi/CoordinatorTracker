@@ -6,7 +6,7 @@ import { requireAdmin } from "../../../lib/adminAuth";
 import AdminNav from "../AdminNav";
 import CredentialsCard from "../CredentialsCard";
 
-// Super admin only: create admins and assign coordinators to them.
+// Super admin only: create admins and super admins, assign coordinators to admins.
 export default function TeamPage() {
   const router = useRouter();
   const [me, setMe] = useState(null);
@@ -21,6 +21,8 @@ export default function TeamPage() {
   const [search, setSearch] = useState("");
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [showInactive, setShowInactive] = useState(false);
+  const [view, setView] = useState("team"); // team | super
+  const [newSuper, setNewSuper] = useState({ full_name: "", email: "" });
 
   const load = useCallback(async () => {
     const { data, error: err } = await supabase
@@ -42,7 +44,13 @@ export default function TeamPage() {
   }, [router, load]);
 
   const admins = useMemo(() => people.filter((p) => p.role === "hr_admin"), [people]);
-  const activeAdmins = useMemo(() => admins.filter((a) => a.active !== false), [admins]);
+  const supers = useMemo(() => people.filter((p) => p.role === "super_admin"), [people]);
+  // Coordinators can belong to an admin or a super admin.
+  const activeAdmins = useMemo(
+    () => people.filter((p) => (p.role === "hr_admin" || p.role === "super_admin") && p.active !== false),
+    [people]
+  );
+  const activeSuperCount = supers.filter((p) => p.active !== false).length;
   const coordinators = useMemo(() => {
     let list = people.filter((p) => p.role === "coordinator");
     if (onlyUnassigned) list = list.filter((p) => !p.admin_id);
@@ -89,26 +97,40 @@ export default function TeamPage() {
     setTimeout(() => setNotice(""), 3500);
   }
 
-  async function createAdmin(e) {
+  async function createAdmin(e, role = "hr_admin") {
     e.preventDefault();
     setError("");
-    const full_name = newAdmin.full_name.trim();
-    const email = newAdmin.email.trim();
-    if (!full_name || !email) { setError("Enter the admin's name and email."); return; }
+    const form = role === "super_admin" ? newSuper : newAdmin;
+    const full_name = form.full_name.trim();
+    const email = form.email.trim();
+    if (!full_name || !email) { setError(`Enter the ${role === "super_admin" ? "super admin" : "admin"}'s name and email.`); return; }
     setCreating(true);
-    const { data, error: fnErr } = await supabase.functions.invoke("create-admin", { body: { full_name, email } });
+    const { data, error: fnErr } = await supabase.functions.invoke("create-admin", { body: { full_name, email, role } });
     let message = data?.error;
     if (fnErr) {
       try { message = (await fnErr.context.json()).error; } catch { message = fnErr.message; }
     }
     setCreating(false);
     if (message) { setError(message); return; }
-    setNewAdmin({ full_name: "", email: "" });
+    if (role === "super_admin") setNewSuper({ full_name: "", email: "" });
+    else setNewAdmin({ full_name: "", email: "" });
     if (data?.temp_password) {
       setCreds({ name: full_name, email: data.email || email, password: data.temp_password });
     } else {
-      flash(`${full_name} already had an account and is now an admin.`);
+      flash(`${full_name} already had an account and is now ${role === "super_admin" ? "a super admin" : "an admin"}.`);
     }
+    load();
+  }
+
+  async function removeSuperAccess(person) {
+    setError("");
+    const who = person.full_name || person.email;
+    if (!window.confirm(`Remove super admin access from ${who}? They'll stay on as a regular admin and keep any coordinators assigned to them.`)) return;
+    setSavingId(person.id);
+    const { error: err } = await supabase.from("profiles").update({ role: "hr_admin" }).eq("id", person.id);
+    setSavingId(null);
+    if (err) { setError(err.message); return; }
+    flash(`${who} is now a regular admin.`);
     load();
   }
 
@@ -134,6 +156,80 @@ export default function TeamPage() {
       {notice && <div className="card status-done" style={{ padding: "10px 14px" }}>{notice}</div>}
       {creds && <CredentialsCard creds={creds} onClose={() => setCreds(null)} />}
 
+      <div className="tab-row">
+        <button className={`tab-btn ${view === "team" ? "active" : ""}`} onClick={() => { setView("team"); setError(""); }}>
+          Admins &amp; coordinators
+        </button>
+        <button className={`tab-btn ${view === "super" ? "active" : ""}`} onClick={() => { setView("super"); setError(""); }}>
+          Super admins ({activeSuperCount})
+        </button>
+      </div>
+
+      {view === "super" && (
+        <>
+          <div className="card">
+            <h2 style={{ marginBottom: 4 }}>Add a super admin</h2>
+            <p className="muted" style={{ marginTop: 0 }}>
+              Super admins see every coordinator, site and record, and can manage admins and other super admins.
+              You&apos;ll get a temporary password to send them. If the email already has an account, it&apos;s promoted instead.
+            </p>
+            <form onSubmit={(e) => createAdmin(e, "super_admin")} className="filter-row">
+              <div className="field" style={{ flex: 1, minWidth: 180 }}>
+                <label>Full name</label>
+                <input value={newSuper.full_name} onChange={(e) => setNewSuper({ ...newSuper, full_name: e.target.value })} />
+              </div>
+              <div className="field" style={{ flex: 1, minWidth: 200 }}>
+                <label>Email</label>
+                <input type="email" value={newSuper.email} autoCapitalize="none"
+                  onChange={(e) => setNewSuper({ ...newSuper, email: e.target.value })} />
+              </div>
+              <button type="submit" className="primary" style={{ width: "auto", marginBottom: 0 }} disabled={creating}>
+                {creating ? "Creating..." : "Create super admin"}
+              </button>
+            </form>
+          </div>
+
+          <div className="card" style={{ overflowX: "auto" }}>
+            <h2>Super admins ({supers.length})</h2>
+            <table>
+              <thead>
+                <tr><th>Name</th><th>Email</th><th>Status</th><th></th></tr>
+              </thead>
+              <tbody>
+                {supers.map((p) => {
+                  const isMe = p.id === me.id;
+                  const lastOne = p.active !== false && activeSuperCount <= 1;
+                  return (
+                    <tr key={p.id} style={p.active === false ? { opacity: 0.6 } : undefined}>
+                      <td>{p.full_name}{isMe && <span className="badge done" style={{ marginLeft: 6 }}>You</span>}</td>
+                      <td>{p.email}</td>
+                      <td>{p.active === false ? <span className="badge flagged">Deactivated</span> : <span className="badge ok">Active</span>}</td>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        {isMe ? (
+                          <span className="muted">Another super admin can change your access</span>
+                        ) : (
+                          <>
+                            <button className="link" disabled={savingId === p.id || lastOne} onClick={() => setActive(p, p.active === false)}>
+                              {p.active === false ? "Reactivate" : "Deactivate"}
+                            </button>
+                            <button className="link" style={{ color: "var(--danger)" }} disabled={savingId === p.id || lastOne}
+                              onClick={() => removeSuperAccess(p)}>
+                              Remove super admin access
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {view === "team" && (
+      <>
       <div className="card">
         <h2 style={{ marginBottom: 4 }}>Add an admin</h2>
         <p className="muted" style={{ marginTop: 0 }}>
@@ -226,7 +322,11 @@ export default function TeamPage() {
                     onChange={(e) => setAdminFor(c.id, e.target.value)}
                   >
                     <option value="">Unassigned</option>
-                    {activeAdmins.map((a) => <option key={a.id} value={a.id}>{a.full_name || a.email}</option>)}
+                    {activeAdmins.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.full_name || a.email}{a.role === "super_admin" ? " (super admin)" : ""}
+                      </option>
+                    ))}
                   </select>
                 </td>
                 <td>
@@ -241,6 +341,8 @@ export default function TeamPage() {
         </table>
         {coordinators.length === 0 && <p className="muted" style={{ marginTop: 10 }}>No coordinators match.</p>}
       </div>
+      </>
+      )}
     </div>
   );
 }
