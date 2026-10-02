@@ -21,12 +21,14 @@ export default function Home() {
       }
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role, active")
+        .select("role, active, must_change_password")
         .eq("id", user.id)
         .single();
 
       if (profile?.active === false) {
         await signOutDeactivated(router);
+      } else if (profile?.must_change_password) {
+        router.replace("/change-password");
       } else if (profile?.role === "hr_admin" || profile?.role === "super_admin") {
         router.replace("/admin");
       } else {
