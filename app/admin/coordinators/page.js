@@ -225,8 +225,9 @@ export default function CoordinatorsPage() {
 
   async function removeSite(assignmentId) {
     setError("");
+    if (!window.confirm("Remove this site from the coordinator? They won't be able to check in there any more.")) return;
     const { error: err } = await supabase.from("location_assignments").delete().eq("id", assignmentId);
-    if (err) setError(err.message);
+    if (err) { setError(err.message); return; }
     load(me);
   }
 
