@@ -480,3 +480,17 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .shutter:active { transform: scale(0.94); }
 .shutter:disabled { opacity: 0.4; }
 .photo-links { display: flex; gap: 6px; }
+
+/* ---- v1.4: PM-created accounts ---- */
+.creds-card { border-left-color: var(--sea); background: #F3FAF5; }
+.creds-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; margin-bottom: 12px; font-size: 0.95rem; }
+.creds-pass { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.creds-pass code { font-size: 1.1rem; font-weight: 700; letter-spacing: 0.04em; background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; }
+.creds-message { white-space: pre-wrap; font-family: inherit; font-size: 0.85rem; background: #fff; border: 1px dashed var(--border); border-radius: 10px; padding: 10px 12px; margin: 0 0 12px; color: var(--text); }
+.creds-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.creds-actions > * { width: auto; flex: 1; min-width: 180px; }
+a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; text-align: center; }
+a.btn.secondary { background: #EEF2E8; color: var(--text); }
+.mobile-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; font-size: 0.9rem; }
+.mobile-line input { width: 170px; margin: 0; padding: 6px 10px; min-height: 0; font-size: 0.95rem; }
+.coord-card .badge.pending { display: inline-block; }

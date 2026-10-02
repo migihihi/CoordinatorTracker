@@ -302,10 +302,14 @@ export default function CheckinPage() {
       try {
         const { data } = await supabase
           .from("profiles")
-          .select("full_name, role, active")
+          .select("full_name, role, active, must_change_password")
           .eq("id", uid)
           .single();
         profile = data;
+        if (data?.must_change_password) {
+          router.replace("/change-password");
+          return;
+        }
       } catch {}
       if (profile) {
         writeCache(uid, { profile });
