@@ -10,6 +10,8 @@ import {
   enqueue,
   submitAttendanceRecord,
   flushQueue,
+  readRejected,
+  clearRejected,
   submitLeaveRecord,
   deleteTodaysLeaveRecord,
 } from "../../lib/offlineQueue";
@@ -20,6 +22,24 @@ function startOfToday() {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d.toISOString();
+}
+function startOfYesterday() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - 1);
+  return d.toISOString();
+}
+// Today's records, plus a visit checked into yesterday and not yet checked out
+// (e.g. a shift past midnight), so it can still be checked out.
+function withOpenVisits(logs) {
+  const todayStart = new Date(startOfToday());
+  const today = logs.filter((l) => new Date(l.captured_at) >= todayStart);
+  const lastBySite = {};
+  logs.filter((l) => new Date(l.captured_at) < todayStart).forEach((l) => { lastBySite[l.location_id] = l; });
+  const carried = Object.values(lastBySite).filter(
+    (l) => l.type === "check_in" && !today.some((t) => t.location_id === l.location_id)
+  );
+  return [...carried, ...today];
 }
 function todayKey() {
   // local (Philippine) date, not UTC
@@ -119,6 +139,7 @@ export default function CheckinPage() {
   const [dismissedIds, setDismissedIds] = useState(() => new Set());
   const [usingSaved, setUsingSaved] = useState(false); // showing data saved on the phone (offline)
   const [cameraSteps, setCameraSteps] = useState(null); // in-app camera open when set
+  const [rejected, setRejected] = useState([]); // saved check-ins the server refused
 
   const showToast = (msg) => {
     setToast(msg);
@@ -195,9 +216,10 @@ export default function CheckinPage() {
         .from("attendance_logs")
         .select("id, location_id, type, captured_at, notes")
         .eq("coordinator_id", uid)
-        .gte("captured_at", startOfToday())
+        .gte("captured_at", startOfYesterday())
         .order("captured_at", { ascending: true });
       if (lErr) throw lErr;
+      const visitLogs = withOpenVisits(logs || []);
 
       const { data: leave } = await supabase
         .from("leave_records")
@@ -216,11 +238,11 @@ export default function CheckinPage() {
         .limit(5);
 
       setSites(list);
-      setTodaysLogs(withQueued(logs || []));
+      setTodaysLogs(withQueued(visitLogs));
       setLeaveToday(leave || null);
       setAnnouncements(announce || []);
       setUsingSaved(false);
-      writeCache(uid, { sites: list, day: today, logs: logs || [], leave: leave || null, announcements: announce || [] });
+      writeCache(uid, { sites: list, day: today, logs: visitLogs, leave: leave || null, announcements: announce || [] });
     } catch (e) {
       // Offline (or the server can't be reached): use what was saved on the phone last time.
       setSites(cache.sites || []);
@@ -233,7 +255,14 @@ export default function CheckinPage() {
     }
 
     setPendingCount(readQueue().filter((r) => r.coordinator_id === uid).length);
+    setRejected(readRejected(uid));
   }, []);
+
+  const syncNow = useCallback(async (uid) => {
+    const res = await flushQueue(uid);
+    await loadData(uid);
+    return res;
+  }, [loadData]);
 
   const loadHistory = useCallback(async (uid) => {
     const since = new Date();
@@ -325,9 +354,9 @@ export default function CheckinPage() {
 
       await loadData(uid);
       setLoading(false);
-      flushQueue(() => loadData(uid));
+      syncNow(uid);
     })();
-  }, [loadData, router]);
+  }, [loadData, syncNow, router]);
 
   useEffect(() => {
     if (tab === "history" && userId && historyRows === null && !isOffline) {
@@ -341,7 +370,7 @@ export default function CheckinPage() {
       setIsOffline(false);
       if (userId) {
         showToast("Back online — syncing...");
-        flushQueue(() => loadData(userId));
+        syncNow(userId);
       }
     };
     const onOffline = () => setIsOffline(true);
@@ -351,7 +380,7 @@ export default function CheckinPage() {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
     };
-  }, [userId, loadData]);
+  }, [userId, syncNow]);
 
   function dismissAnnouncement(id) {
     setDismissedIds((prev) => new Set(prev).add(id));
@@ -456,6 +485,9 @@ export default function CheckinPage() {
           try { localStorage.removeItem(draftKey(userId, site.id)); } catch {}
           setDraftNote("");
         }
+      } else if (result.permanent) {
+        // the server refused it (not a connection problem): say why, don't queue it
+        throw new Error(result.error?.message || "Couldn't save this check-in. Try again.");
       } else {
         try {
           enqueue(record);
@@ -484,8 +516,15 @@ export default function CheckinPage() {
 
   async function handleSyncNow() {
     showToast("Syncing...");
-    await flushQueue(() => loadData(userId));
-    showToast("Sync complete");
+    const res = await syncNow(userId);
+    if (res.remaining > 0) showToast("Still no connection — will keep trying");
+    else if (res.rejected > 0) showToast("Done, but some check-ins couldn't be saved");
+    else showToast("Sync complete");
+  }
+
+  function dismissRejected() {
+    clearRejected(userId);
+    setRejected([]);
   }
 
   async function handleLogout() {
@@ -590,11 +629,19 @@ export default function CheckinPage() {
             </div>
           )}
 
+          {rejected.length > 0 && (
+            <div className="error-box">
+              {rejected.length === 1 ? "A saved check-in" : `${rejected.length} saved check-ins`} couldn&apos;t be sent:{" "}
+              {rejected[rejected.length - 1].reason} Tell your project manager.{" "}
+              <button className="link" style={{ color: "inherit", padding: 0 }} onClick={dismissRejected}>Dismiss</button>
+            </div>
+          )}
+
           {error && <div className="error-box">{error}</div>}
 
           {sites.length === 0 && (
             <div className="card">
-              <p className="muted">No sites assigned to you yet. Ask HR to assign you a location.</p>
+              <p className="muted">No sites assigned to you yet. Ask your project manager to assign you one.</p>
             </div>
           )}
 
@@ -824,7 +871,7 @@ export default function CheckinPage() {
             ))}
             <div className="field-label">Note (optional)</div>
             <textarea
-              placeholder="Anything HR should know?"
+              placeholder="Anything your project manager should know?"
               value={leaveNote}
               onChange={(e) => setLeaveNote(e.target.value)}
             />
