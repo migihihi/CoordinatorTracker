@@ -6,7 +6,7 @@ import { requireAdmin, fetchAll, localDateKey, startOfLocalDay } from "../../../
 import AdminNav from "../AdminNav";
 import "./activity.css";
 
-// Super admin only: everything that happened in the app, newest first.
+// Super admin only: account, site and assignment changes, and CSV downloads, newest first.
 const PAGE = 100;
 
 const CATEGORIES = [
@@ -14,10 +14,7 @@ const CATEGORIES = [
   { id: "account", label: "Accounts" },
   { id: "site", label: "Sites" },
   { id: "assignment", label: "Site assignments" },
-  { id: "announcement", label: "Announcements" },
-  { id: "attendance", label: "Check-ins / outs" },
-  { id: "leave", label: "Day off / leave" },
-  { id: "signin", label: "Sign-ins" },
+  { id: "export", label: "CSV downloads" },
 ];
 const CAT_LABEL = Object.fromEntries(CATEGORIES.map((c) => [c.id, c.label]));
 
@@ -94,6 +91,7 @@ export default function ActivityPage() {
       .order("occurred_at", { ascending: false })
       .order("id", { ascending: false });
     if (category !== "all") q = q.eq("category", category);
+    else q = q.in("category", CATEGORIES.filter((c) => c.id !== "all").map((c) => c.id));
     if (person !== "all") q = q.or(`actor_id.eq.${person},target_id.eq.${person}`);
     if (query) q = q.ilike("summary", `%${query.replace(/[\\%_]/g, (c) => "\\" + c)}%`);
     return q;
@@ -149,6 +147,11 @@ export default function ActivityPage() {
       a.download = fromDate === toDate ? `activity_${fromDate}.csv` : `activity_${fromDate}_to_${toDate}.csv`;
       a.click();
       URL.revokeObjectURL(url);
+      await supabase.rpc("log_csv_export", {
+        p_kind: "activity", p_from: fromDate, p_to: toDate, p_rows: all.length,
+        p_filters: { type: category, person: person === "all" ? null : person, search: query || null },
+      });
+      if (category === "all" || category === "export") load(false);
     } catch (e) {
       setError(e.message || "Export failed.");
     } finally {
@@ -180,7 +183,7 @@ export default function ActivityPage() {
 
       <div className="card">
         <p className="muted" style={{ marginTop: 0 }}>
-          Everything that happens in the app: accounts, sites, assignments, announcements, check-ins, leave and sign-ins.
+          Who changed accounts, sites and site assignments, and who downloaded CSV files.
           Only super admins can see this page, and entries can&apos;t be edited or deleted.
         </p>
         <div className="chip-row">
@@ -241,7 +244,6 @@ export default function ActivityPage() {
                   <div className="activity-summary">
                     <span className={`act-badge act-${r.category}`}>{CAT_LABEL[r.category] || r.category}</span>
                     {r.summary}
-                    {r.details?.synced_late && <span className="badge pending" style={{ marginLeft: 6 }}>synced late</span>}
                   </div>
                   <div className="activity-actor">
                     by {r.actor_name || "System"}

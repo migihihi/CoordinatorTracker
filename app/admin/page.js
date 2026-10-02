@@ -230,6 +230,11 @@ export default function AdminPage() {
         : `attendance_${fromDate}_to_${toDate}.csv`;
       a.click();
       URL.revokeObjectURL(url);
+      // record the download in the super admins' activity log
+      await supabase.rpc("log_csv_export", {
+        p_kind: "attendance", p_from: fromDate, p_to: toDate, p_rows: rows.length,
+        p_filters: { flagged_only: flaggedOnly, admin_filter: adminFilter },
+      });
     } catch (e) {
       setError(e.message || "Export failed.");
     } finally {
