@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "../../../lib/supabaseClient";
 import { requireAdmin } from "../../../lib/adminAuth";
 import AdminNav from "../AdminNav";
+import CredentialsCard from "../CredentialsCard";
 
 // Super admin only: create admins and assign coordinators to them.
 export default function TeamPage() {
@@ -15,6 +16,7 @@ export default function TeamPage() {
   const [people, setPeople] = useState([]);
   const [newAdmin, setNewAdmin] = useState({ full_name: "", email: "" });
   const [creating, setCreating] = useState(false);
+  const [creds, setCreds] = useState(null);
   const [savingId, setSavingId] = useState(null);
   const [search, setSearch] = useState("");
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
@@ -102,9 +104,11 @@ export default function TeamPage() {
     setCreating(false);
     if (message) { setError(message); return; }
     setNewAdmin({ full_name: "", email: "" });
-    flash(data?.invited
-      ? `Invite sent to ${email}. They'll get an email to set their password.`
-      : `${full_name} already had an account and is now an admin.`);
+    if (data?.temp_password) {
+      setCreds({ name: full_name, email: data.email || email, password: data.temp_password });
+    } else {
+      flash(`${full_name} already had an account and is now an admin.`);
+    }
     load();
   }
 
@@ -128,11 +132,12 @@ export default function TeamPage() {
 
       {error && <div className="error-box">{error}</div>}
       {notice && <div className="card status-done" style={{ padding: "10px 14px" }}>{notice}</div>}
+      {creds && <CredentialsCard creds={creds} onClose={() => setCreds(null)} />}
 
       <div className="card">
         <h2 style={{ marginBottom: 4 }}>Add an admin</h2>
         <p className="muted" style={{ marginTop: 0 }}>
-          They&apos;ll get an email with a link to set their password. Admins only see the coordinators you assign to them.
+          You&apos;ll get a temporary password to send them; they set their own at first sign-in. Admins only see the coordinators assigned to them.
         </p>
         <form onSubmit={createAdmin} className="filter-row">
           <div className="field" style={{ flex: 1, minWidth: 180 }}>
