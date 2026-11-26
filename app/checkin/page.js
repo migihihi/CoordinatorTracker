@@ -188,13 +188,17 @@ export default function CheckinPage() {
 
       const { data: assignments, error: aErr } = await supabase
         .from("location_assignments")
-        .select("location_id, expected_time, locations(id, name, address, lat, lng, radius_meters, active)")
+        .select("location_id, expected_time, store_label, locations(id, name, address, lat, lng, radius_meters, active)")
         .eq("coordinator_id", uid)
         .eq("active", true);
       if (aErr) throw aErr;
       const list = (assignments || [])
         .filter((a) => a.locations && a.locations.active !== false)
-        .map((a) => ({ location: a.locations, expected_time: a.expected_time }));
+        // A store label (e.g. the store inside a mall) is shown with the site name.
+        .map((a) => ({
+          location: a.store_label ? { ...a.locations, name: `${a.locations.name} · ${a.store_label}` } : a.locations,
+          expected_time: a.expected_time,
+        }));
 
       const { data: logs, error: lErr } = await supabase
         .from("attendance_logs")

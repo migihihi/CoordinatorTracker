@@ -6,6 +6,38 @@ import { requireAdmin, localDateKey, startOfLocalDay } from "../../../lib/adminA
 import AdminNav from "../AdminNav";
 import CredentialsCard from "../CredentialsCard";
 import { normalizeMobile, formatMobile, mobileErrorMessage, MOBILE_HINT } from "../../../lib/mobile";
+import { fetchAll, siteLabel, matchesSearch } from "../../../lib/sites";
+
+// Type-to-search site chooser (there are 1,000+ sites, too many for a dropdown).
+function SitePicker({ sites, value, onChange }) {
+  const [text, setText] = useState("");
+  const [open, setOpen] = useState(false);
+  const chosen = sites.find((s) => s.id === value);
+  const matches = open ? sites.filter((s) => matchesSearch(s, text)).slice(0, 12) : [];
+  return (
+    <div className="site-picker">
+      <input
+        placeholder="Search a site by code, name or city..."
+        value={chosen && !open ? siteLabel(chosen) : text}
+        onFocus={() => { setOpen(true); setText(""); }}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onChange={(e) => { setText(e.target.value); onChange(""); }}
+      />
+      {open && (
+        <div className="site-picker-list">
+          {matches.length === 0 && <div className="muted" style={{ padding: "8px 12px" }}>No sites match.</div>}
+          {matches.map((s) => (
+            <button type="button" key={s.id} onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onChange(s.id); setOpen(false); setText(""); }}>
+              <strong>{s.site_code || "—"}</strong> {s.name}
+              <span className="muted"> · {[s.city, s.province].filter(Boolean).join(", ")}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const EMPTY_NEW = { full_name: "", email: "", mobile: "", admin_id: "" };
 
@@ -43,8 +75,8 @@ export default function CoordinatorsPage() {
     const todayStart = startOfLocalDay(localDateKey());
     const [{ data: peopleData, error: pErr }, { data: siteData }, { data: assignData }, { data: logData }] = await Promise.all([
       supabase.from("profiles").select("id, full_name, email, mobile, must_change_password, role, admin_id, active").order("full_name"),
-      supabase.from("locations").select("id, name, address, created_by, active").order("name"),
-      supabase.from("location_assignments").select("id, coordinator_id, location_id, expected_time, active"),
+      fetchAll(() => supabase.from("locations").select("id, site_code, name, address, city, province, chain, pm_names, created_by, active").order("site_code", { nullsFirst: false })),
+      supabase.from("location_assignments").select("id, coordinator_id, location_id, expected_time, store_label, active"),
       supabase
         .from("attendance_logs")
         .select("coordinator_id, location_id, type, captured_at")
@@ -53,8 +85,8 @@ export default function CoordinatorsPage() {
     ]);
     if (pErr) setError(pErr.message);
     setPeople(peopleData || []);
-    // Admins pick from sites they created; the super admin from every site.
-    setSites((siteData || []).filter((s) => profile.isSuper || s.created_by === profile.id));
+    // Every admin can assign their coordinators to any site (sites are shared).
+    setSites(siteData || []);
     setAssignments(assignData || []);
     setTodayLogs(logData || []);
   }, []);
@@ -212,12 +244,13 @@ export default function CoordinatorsPage() {
       coordinator_id: coordId,
       location_id: f.location_id,
       expected_time: f.expected_time || null,
+      store_label: (f.store_label || "").trim() || null,
     });
     if (err) {
       setError(err.message.includes("duplicate") ? "That site is already assigned to this coordinator." : err.message);
       return;
     }
-    setAddForm((prev) => ({ ...prev, [coordId]: { location_id: "", expected_time: "" } }));
+    setAddForm((prev) => ({ ...prev, [coordId]: { location_id: "", expected_time: "", store_label: "" } }));
     setNotice("Site added.");
     setTimeout(() => setNotice(""), 2500);
     load(me);
@@ -328,7 +361,7 @@ export default function CoordinatorsPage() {
           {coordinators.length} coordinator{coordinators.length === 1 ? "" : "s"}
           {!me.isSuper && " assigned to you"}.
           {sites.length === 0 && (
-            <> You haven&apos;t created any sites yet. <button className="link" style={{ padding: 0 }} onClick={() => router.push("/admin/locations")}>Add a site</button> first.</>
+            <> There are no sites yet. <button className="link" style={{ padding: 0 }} onClick={() => router.push("/admin/locations")}>Add a site</button> first.</>
           )}
         </p>
       </div>
@@ -408,7 +441,8 @@ export default function CoordinatorsPage() {
               {mine.map((a) => (
                 <div className="site-line" key={a.id}>
                   <span>
-                    {siteById[a.location_id]?.name || allSiteNames[a.location_id] || "Site"}
+                    {siteById[a.location_id] ? siteLabel(siteById[a.location_id]) : allSiteNames[a.location_id] || "Site"}
+                    {a.store_label && <span className="muted"> · {a.store_label}</span>}
                     {a.expected_time && <span className="muted"> · expected {a.expected_time.slice(0, 5)}</span>}
                   </span>
                   <button className="link" onClick={() => removeSite(a, c)}>Remove</button>
@@ -418,14 +452,17 @@ export default function CoordinatorsPage() {
 
             {sites.length > 0 && !inactive && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <select
-                  style={{ flex: 1, minWidth: 180, marginBottom: 0 }}
+                <SitePicker
+                  sites={available}
                   value={f.location_id}
-                  onChange={(e) => setAddForm((prev) => ({ ...prev, [c.id]: { ...f, location_id: e.target.value } }))}
-                >
-                  <option value="">Add a site...</option>
-                  {available.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
+                  onChange={(id) => setAddForm((prev) => ({ ...prev, [c.id]: { ...f, location_id: id } }))}
+                />
+                <input
+                  placeholder="Store (optional)"
+                  style={{ width: 150, marginBottom: 0 }}
+                  value={f.store_label || ""}
+                  onChange={(e) => setAddForm((prev) => ({ ...prev, [c.id]: { ...f, store_label: e.target.value } }))}
+                />
                 <input
                   type="time"
                   title="Expected check-in time (optional)"
