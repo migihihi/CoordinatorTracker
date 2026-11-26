@@ -494,3 +494,25 @@ a.btn.secondary { background: #EEF2E8; color: var(--text); }
 .mobile-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; font-size: 0.9rem; }
 .mobile-line input { width: 170px; margin: 0; padding: 6px 10px; min-height: 0; font-size: 0.95rem; }
 .coord-card .badge.pending { display: inline-block; }
+
+/* Site review flag (v1.9.0) */
+.review-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  font-size: 0.9rem;
+}
+.site-picker { position: relative; flex: 1; min-width: 200px; }
+.site-picker input { margin-bottom: 0; }
+.site-picker-list {
+  position: absolute; z-index: 20; left: 0; right: 0; top: 100%;
+  background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; margin-top: 4px;
+  box-shadow: 0 8px 24px rgba(6, 28, 59, 0.12); max-height: 280px; overflow-y: auto;
+}
+.site-picker-list button {
+  display: block; width: 100%; text-align: left; background: none; border: 0;
+  padding: 8px 12px; font-size: 0.9rem; cursor: pointer; color: inherit; border-radius: 0;
+}
+.site-picker-list button:hover, .site-picker-list button:focus { background: #f3f4f6; }
